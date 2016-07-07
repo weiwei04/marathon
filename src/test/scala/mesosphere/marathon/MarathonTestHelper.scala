@@ -342,9 +342,12 @@ object MarathonTestHelper {
     )
   }
 
-  def mininimalLostTask(appId: PathId): Task.LaunchedEphemeral = {
-    val taskId = Task.Id.forRunSpec(appId)
-    val status = TaskStatusUpdateTestHelper.makeMesosTaskStatus(taskId, TaskState.TASK_LOST, maybeReason = Some(TaskStatus.Reason.REASON_RECONCILIATION))
+  def mininimalLostTask(appId: PathId, reason: TaskStatus.Reason = TaskStatus.Reason.REASON_RECONCILIATION): Task.LaunchedEphemeral = {
+    mininimalLostTask(Task.Id.forRunSpec(appId), reason)
+  }
+
+  def mininimalLostTask(taskId: Task.Id, reason: TaskStatus.Reason): Task.LaunchedEphemeral = {
+    val status = TaskStatusUpdateTestHelper.makeMesosTaskStatus(taskId, TaskState.TASK_LOST, maybeReason = Some(reason))
     mininimalTask(
       taskId = taskId.idString,
       mesosStatus = Some(status))

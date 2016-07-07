@@ -12,6 +12,7 @@ object ScalingProposition {
     meetConstraints: ((Iterable[Task], Int) => Iterable[Task]),
     scaleTo: Int): ScalingProposition = {
 
+    // TODO: tasks in state KILLING shouldn't be killed and should decrease the amount to kill
     val runningTaskMap = Task.tasksById(runningTasks)
     val toKillMap = Task.tasksById(toKill.getOrElse(Set.empty))
 
@@ -29,10 +30,18 @@ object ScalingProposition {
     // rest are tasks that are not sentenced and need not be killed to meet constraints
     val rest = notSentencedAndRunningMap -- killToMeetConstraints.map(_.taskId)
 
+    // TODO: this should evaluate a task's health as well
+    // If we need to kill tasks, the order should be LOST - UNREACHABLE - UNHEALTHY - STAGING - (EVERYTHING ELSE)
+    def sortByStatusAndDate(a: Task, b: Task): Boolean = {
+      import SortHelper._
+      if (weight(a) < weight(b)) true
+      else startedAt(a) > startedAt(b)
+    }
+
     val ordered =
       sentencedAndRunningMap.values.toSeq ++
         killToMeetConstraints.toSeq ++
-        rest.values.toSeq.sortBy(_.launched.flatMap(_.status.startedAt).getOrElse(Timestamp.zero)).reverse
+        rest.values.toSeq.sortWith(sortByStatusAndDate)
 
     val candidatesToKill = ordered.take(killCount)
     val numberOfTasksToStart = scaleTo - runningTasks.size + killCount
@@ -43,4 +52,23 @@ object ScalingProposition {
     ScalingProposition(tasksToKill, tasksToStart)
   }
 
+}
+
+private[this] object SortHelper {
+  import mesosphere.marathon.core.task.bus.MesosTaskStatus._
+
+  // TODO: as soon as we have a clear task state the weights should be defined there or in a map
+  /** tasks with lower weight should be killed first */
+  def weight(task: Task): Int = {
+    if (Lost.isLost(task)) 0
+    else if (TemporarilyUnreachable.isUnreachable(task)) 1
+    else if (Staging.isStaging(task)) 2
+    else if (Starting.isStarting(task)) 3
+    else if (Running.isRunning(task)) 4
+    else 5
+  }
+
+  def startedAt(task: Task): Timestamp = {
+    task.launched.flatMap(_.status.startedAt).getOrElse(Timestamp.zero)
+  }
 }

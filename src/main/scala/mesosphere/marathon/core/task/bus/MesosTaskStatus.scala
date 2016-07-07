@@ -41,10 +41,35 @@ object MesosTaskStatus {
     }
   }
 
+  object Lost {
+    def isLost(task: Task): Boolean = task.mesosStatus.fold(false)(isLost)
+    def isLost(taskStatus: TaskStatus): Boolean = {
+      taskStatus.getState == TASK_LOST && WontComeBack(taskStatus.getReason)
+    }
+    def unapply(task: Task): Option[Task] = {
+      if (isLost(task)) Some(task) else None
+    }
+  }
+
   object Running {
+    def isRunning(task: Task): Boolean = task.mesosStatus.fold(false)(isRunning)
+    def isRunning(taskStatus: TaskStatus): Boolean = taskStatus.getState == TASK_RUNNING
+    def unapply(task: Task): Option[Task] = if (isRunning(task)) Some(task) else None
     def unapply(taskStatus: TaskStatus): Option[TaskStatus] = taskStatus.getState match {
       case TASK_RUNNING => Some(taskStatus)
       case _ => None
     }
+  }
+
+  object Staging {
+    def isStaging(task: Task): Boolean = task.mesosStatus.fold(false)(isStaging)
+    def isStaging(taskStatus: TaskStatus): Boolean = taskStatus.getState == TASK_STAGING
+    def unapply(task: Task): Option[Task] = if (isStaging(task)) Some(task) else None
+  }
+
+  object Starting {
+    def isStarting(task: Task): Boolean = task.mesosStatus.fold(false)(isStarting)
+    def isStarting(taskStatus: TaskStatus): Boolean = taskStatus.getState == TASK_STARTING
+    def unapply(task: Task): Option[Task] = if (isStarting(task)) Some(task) else None
   }
 }

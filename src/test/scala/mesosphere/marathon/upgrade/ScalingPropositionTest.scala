@@ -3,7 +3,10 @@ package mesosphere.marathon.upgrade
 import mesosphere.marathon.MarathonTestHelper
 import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.state.Timestamp
+import org.apache.mesos
 import org.scalatest.{ FunSuite, Matchers }
+
+import scala.concurrent.duration._
 
 class ScalingPropositionTest extends FunSuite with Matchers {
 
@@ -144,9 +147,31 @@ class ScalingPropositionTest extends FunSuite with Matchers {
     proposition.tasksToStart shouldBe empty
   }
 
+  test("Order of tasks to kill: kill LOST and unhealthy before running, staging, healthy") {
+    val runningTask = createTask(1)
+    val lostTask = createLostTask(2)
+    val stagingTask = createStagingTask(3)
+
+    val proposition = ScalingProposition.propose(
+      runningTasks = Iterable(runningTask, lostTask, stagingTask),
+      toKill = None,
+      meetConstraints = killToMeetConstraints(),
+      scaleTo = 1
+    )
+
+    proposition.tasksToKill shouldBe defined
+    proposition.tasksToKill.get should have size 2
+    proposition.tasksToKill.get shouldEqual Seq(lostTask, stagingTask)
+    proposition.tasksToStart shouldBe empty
+  }
+
   // Helper functions
 
-  private def createTask(index: Long) = MarathonTestHelper.runningTask(s"task-$index", appVersion = Timestamp(index), startedAt = Timestamp.now().toDateTime.getMillis)
+  private def createTask(index: Long) = MarathonTestHelper.runningTask(s"task-$index", appVersion = Timestamp(index), startedAt = Timestamp.now().+(index.hours).toDateTime.getMillis)
+
+  private def createLostTask(index: Long) = MarathonTestHelper.mininimalLostTask(Task.Id(s"task-$index"), mesos.Protos.TaskStatus.Reason.REASON_SLAVE_DISCONNECTED)
+
+  private def createStagingTask(index: Long) = MarathonTestHelper.stagedTask(s"task-$index")
 
   private def noConstraintsToMeet(running: Iterable[Task], killCount: Int) = Iterable.empty[Task]
 
