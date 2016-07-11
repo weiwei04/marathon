@@ -6,6 +6,7 @@ import akka.util.Timeout
 import mesosphere.marathon.core.launchqueue.LaunchQueue
 import mesosphere.marathon.core.readiness.ReadinessCheckExecutor
 import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.termination.TaskKillService
 import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.event.MesosStatusUpdateEvent
 import mesosphere.marathon.health.HealthCheckManager
@@ -24,6 +25,10 @@ import org.scalatest.{ BeforeAndAfterAll, Matchers }
 import scala.concurrent.{ Await, Future }
 import scala.concurrent.duration._
 
+// TODO: this is NOT a unit test. the DeploymentActor create child actors that cannot be mocked in the current
+// setup which makes the test overly complicated because events etc have to be mocked for these.
+// The way forward should be to provide factories that create the child actors with a given context, or
+// to use delegates that hide the implementation behind a mockable function call.
 class DeploymentActorTest
     extends MarathonSpec
     with Matchers
@@ -69,9 +74,11 @@ class DeploymentActorTest
     when(f.tracker.appTasksLaunchedSync(app3.id)).thenReturn(Set(task3_1))
     when(f.tracker.appTasksLaunchedSync(app4.id)).thenReturn(Set(task4_1))
 
-    f.driverKillSendsStatusKilledFor(app1, task1_2)
-    f.driverKillSendsStatusKilledFor(app2, task2_1)
-    f.driverKillSendsStatusKilledFor(app4, task4_1)
+    f.killService.kill(any[Iterable[Task]]).returns(Future.successful(()))
+    f.driver.killTask(any).returns {
+      // TODO: do we need this?
+      Status.DRIVER_RUNNING
+    }
 
     when(f.queue.add(same(app2New), any[Int])).thenAnswer(new Answer[Boolean] {
       def answer(invocation: InvocationOnMock): Boolean = {
@@ -110,7 +117,7 @@ class DeploymentActorTest
       managerProbe.expectMsg(5.seconds, DeploymentFinished(plan))
 
       verify(f.scheduler).startApp(f.driver, app3.copy(instances = 0))
-      verify(f.driver, times(1)).killTask(task1_2.taskId.mesosTaskId)
+      verify(f.killService, times(1)).kill(task1_2)
       verify(f.scheduler).stopApp(f.driver, app4.copy(instances = 0))
     } finally {
       Await.result(system.terminate(), Duration.Inf)
@@ -137,8 +144,7 @@ class DeploymentActorTest
 
     val plan = DeploymentPlan("foo", origGroup, targetGroup, List(DeploymentStep(List(RestartApplication(appNew)))), Timestamp.now())
 
-    f.driverKillSendsStatusKilledFor(app, task1_1)
-    f.driverKillSendsStatusKilledFor(app, task1_2)
+    f.killService.kill(any[Iterable[Task]]).returns(Future.successful(()))
 
     val taskIDs = Iterator.from(3)
 
@@ -214,7 +220,7 @@ class DeploymentActorTest
 
     when(f.tracker.appTasksLaunchedSync(app1.id)).thenReturn(Set(task1_1, task1_2, task1_3))
 
-    f.driverKillSendsStatusKilledFor(app1, task1_2)
+    f.killService.kill(any[Iterable[Task]]).returns(Future.successful(()))
 
     try {
       f.deploymentActor(managerProbe.ref, receiverProbe.ref, plan)
@@ -225,7 +231,7 @@ class DeploymentActorTest
 
       managerProbe.expectMsg(5.seconds, DeploymentFinished(plan))
 
-      verify(f.driver, times(1)).killTask(task1_2.taskId.mesosTaskId)
+      verify(f.killService, times(1)).kill(Iterable(task1_2))
       verifyNoMoreInteractions(f.driver)
     } finally {
       Await.result(system.terminate(), Duration.Inf)
@@ -236,6 +242,7 @@ class DeploymentActorTest
     val tracker: TaskTracker = mock[TaskTracker]
     val queue: LaunchQueue = mock[LaunchQueue]
     val driver: SchedulerDriver = mock[SchedulerDriver]
+    val killService: TaskKillService = mock[TaskKillService]
     val scheduler: SchedulerActions = mock[SchedulerActions]
     val storage: StorageProvider = mock[StorageProvider]
     val hcManager: HealthCheckManager = mock[HealthCheckManager]
@@ -245,20 +252,12 @@ class DeploymentActorTest
     config.killBatchSize returns 100
     config.killBatchCycle returns 10.seconds
 
-    def driverKillSendsStatusKilledFor(app: AppDefinition, task: Task): Unit = {
-      driver.killTask(task.taskId.mesosTaskId) answers { args =>
-        system.eventStream.publish(MesosStatusUpdateEvent(
-          slaveId = "", taskId = task.taskId, taskStatus = "TASK_KILLED", message = "", appId = app.id, host = "",
-          ipAddresses = None, ports = Nil, version = app.version.toString))
-        Status.DRIVER_RUNNING
-      }
-    }
-
     def deploymentActor(manager: ActorRef, receiver: ActorRef, plan: DeploymentPlan) = TestActorRef(
       DeploymentActor.props(
         manager,
         receiver,
         driver,
+        killService,
         scheduler,
         plan,
         tracker,

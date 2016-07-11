@@ -10,12 +10,13 @@ import mesosphere.marathon.api.v2.json.AppUpdate
 import mesosphere.marathon.core.election.ElectionService
 import mesosphere.marathon.core.launchqueue.LaunchQueue
 import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.termination.TaskKillService
 import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.event.{ AppTerminatedEvent, DeploymentFailed, DeploymentSuccess, LocalLeadershipEvent }
 import mesosphere.marathon.health.HealthCheckManager
 import mesosphere.marathon.state._
 import mesosphere.marathon.upgrade.DeploymentManager._
-import mesosphere.marathon.upgrade.{ DeploymentManager, DeploymentPlan, TaskKillActor, UpgradeConfig }
+import mesosphere.marathon.upgrade.{ DeploymentManager, DeploymentPlan, UpgradeConfig }
 import org.apache.mesos.Protos.{ Status, TaskID, TaskState }
 import org.apache.mesos.SchedulerDriver
 import org.slf4j.LoggerFactory
@@ -24,7 +25,7 @@ import scala.async.Async.{ async, await }
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 import scala.concurrent.duration._
-import scala.concurrent.{ ExecutionContext, Future, Promise }
+import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.control.NonFatal
 import scala.util.{ Failure, Success, Try }
 
@@ -39,6 +40,7 @@ class MarathonSchedulerActor private (
     deploymentRepository: DeploymentRepository,
     healthCheckManager: HealthCheckManager,
     taskTracker: TaskTracker,
+    killService: TaskKillService,
     launchQueue: LaunchQueue,
     marathonSchedulerDriverHolder: MarathonSchedulerDriverHolder,
     electionService: ElectionService,
@@ -157,13 +159,11 @@ class MarathonSchedulerActor private (
     case cmd @ Deploy(plan, force) =>
       deploy(sender(), cmd)
 
-    case cmd @ KillTasks(appId, taskIds) =>
+    case cmd @ KillTasks(appId, tasks) =>
       val origSender = sender()
       withLockFor(appId) {
-        val promise = Promise[Unit]()
-        context.actorOf(TaskKillActor.props(driver, appId, taskTracker, eventBus, taskIds, config, promise))
         val res = async {
-          await(promise.future)
+          await(killService.kill(tasks))
           val app = await(appRepository.currentVersion(appId))
           app.foreach(schedulerActions.scale(driver, _))
         }
@@ -338,6 +338,7 @@ object MarathonSchedulerActor {
     deploymentRepository: DeploymentRepository,
     healthCheckManager: HealthCheckManager,
     taskTracker: TaskTracker,
+    killService: TaskKillService,
     launchQueue: LaunchQueue,
     marathonSchedulerDriverHolder: MarathonSchedulerDriverHolder,
     electionService: ElectionService,
@@ -352,6 +353,7 @@ object MarathonSchedulerActor {
       deploymentRepository,
       healthCheckManager,
       taskTracker,
+      killService,
       launchQueue,
       marathonSchedulerDriverHolder,
       electionService,
@@ -385,8 +387,8 @@ object MarathonSchedulerActor {
     def answer: Event = DeploymentStarted(plan)
   }
 
-  case class KillTasks(appId: PathId, taskIds: Iterable[Task.Id]) extends Command {
-    def answer: Event = TasksKilled(appId, taskIds)
+  case class KillTasks(appId: PathId, tasks: Iterable[Task]) extends Command {
+    def answer: Event = TasksKilled(appId, tasks.map(_.taskId))
   }
 
   case object RetrieveRunningDeployments

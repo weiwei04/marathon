@@ -15,6 +15,7 @@ import org.apache.mesos.Protos.TaskStatus
 import org.slf4j.LoggerFactory
 
 import scala.concurrent.Future
+import scala.collection.immutable.Seq
 
 /**
   * Post this update to the internal event stream.
@@ -29,10 +30,13 @@ class PostToEventStreamStepImpl @Inject() (
   override def processUpdate(taskChanged: TaskChanged): Future[_] = {
     import TaskStateOp.MesosUpdate
 
+    // TODO: write unit tests to verify that ALL expunges/terminations are posted to the event stream and do
+    // obviously denote a task as terminal
+
     taskChanged match {
       // case 1: Mesos status update => update or expunge
-      // In this case, we post the OLD state - when terminated, a persistent task no longer has a launched
-      case TaskChanged(MesosUpdate(task, WithMesosStatus(status), now), EffectiveTaskStateChange(_)) =>
+      // In this case, we post the NEW state
+      case TaskChanged(MesosUpdate(_, WithMesosStatus(status), now), EffectiveTaskStateChange(task)) =>
         postEvent(clock.now(), Some(status), task)
 
       // case 2: Any TaskStateOp => update or expunge
@@ -50,8 +54,10 @@ class PostToEventStreamStepImpl @Inject() (
   private[this] def postEvent(timestamp: Timestamp, maybeStatus: Option[TaskStatus], task: Task): Unit = {
     val taskId = task.taskId
 
+    val ports = task.launched.fold(Seq.empty[Int])(_.hostPorts)
+    val version = task.launched.fold("n/a")(_.runSpecVersion.toString)
+
     for {
-      launched <- task.launched
       status <- maybeStatus
     } {
       log.info(
@@ -67,8 +73,8 @@ class PostToEventStreamStepImpl @Inject() (
           appId = taskId.runSpecId,
           host = task.agentInfo.host,
           ipAddresses = Task.MesosStatus.ipAddresses(status),
-          ports = launched.hostPorts,
-          version = launched.runSpecVersion.toString,
+          ports = ports,
+          version = version,
           timestamp = timestamp.toString
         )
       )

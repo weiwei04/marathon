@@ -5,15 +5,15 @@ import akka.testkit.TestActorRef
 import mesosphere.marathon.core.launchqueue.LaunchQueue
 import mesosphere.marathon.core.readiness.ReadinessCheckExecutor
 import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.termination.TaskKillService
 import mesosphere.marathon.core.task.tracker.TaskTracker
-import mesosphere.marathon.event.{ DeploymentStatus, HealthStatusChanged, MesosStatusUpdateEvent }
+import mesosphere.marathon.event.{DeploymentStatus, HealthStatusChanged, MesosStatusUpdateEvent}
 import mesosphere.marathon.health.HealthCheck
 import mesosphere.marathon.state.PathId._
-import mesosphere.marathon.state.{ AppDefinition, UpgradeStrategy }
+import mesosphere.marathon.state.{AppDefinition, UpgradeStrategy}
 import mesosphere.marathon.test.MarathonActorSupport
-import mesosphere.marathon.upgrade.TaskReplaceActor.RetryKills
-import mesosphere.marathon.{ MarathonTestHelper, TaskUpgradeCanceledException }
-import org.apache.mesos.Protos.{ Status, TaskID }
+import mesosphere.marathon.{MarathonTestHelper, TaskUpgradeCanceledException}
+import org.apache.mesos.Protos.{Status, TaskID}
 import org.apache.mesos.SchedulerDriver
 import org.mockito.Matchers.any
 import org.mockito.Mockito
@@ -22,10 +22,10 @@ import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
 import org.scalatest.concurrent.Eventually
 import org.scalatest.mock.MockitoSugar
-import org.scalatest.{ BeforeAndAfterAll, FunSuiteLike, Matchers }
+import org.scalatest.{BeforeAndAfterAll, FunSuiteLike, Matchers}
 
 import scala.concurrent.duration._
-import scala.concurrent.{ Await, Promise }
+import scala.concurrent.{Await, Promise}
 
 class TaskReplaceActorTest
     extends MarathonActorSupport
@@ -473,48 +473,6 @@ class TaskReplaceActorTest
     expectTerminated(ref)
   }
 
-  test("Retry outstanding kills") {
-    val f = new Fixture
-    val app = AppDefinition(id = "myApp".toPath, instances = 5, upgradeStrategy = UpgradeStrategy(0.0))
-    val taskA = MarathonTestHelper.runningTask("taskA_id")
-    val taskB = MarathonTestHelper.runningTask("taskB_id")
-
-    when(f.tracker.appTasksLaunchedSync(app.id)).thenReturn(Iterable(taskA, taskB))
-    when(f.driver.killTask(any[TaskID])).thenAnswer(new Answer[Status] {
-      var firstKillForTaskB = true
-
-      def answer(invocation: InvocationOnMock): Status = {
-        val taskId = Task.Id(invocation.getArguments()(0).asInstanceOf[TaskID])
-
-        if (taskId == taskB.taskId && firstKillForTaskB) {
-          firstKillForTaskB = false
-        } else {
-          val update = MesosStatusUpdateEvent("", taskId, "TASK_KILLED", "", app.id, "", None, Nil, app.version.toString)
-          system.eventStream.publish(update)
-        }
-        Status.DRIVER_RUNNING
-      }
-    })
-
-    val promise = Promise[Unit]()
-
-    val ref = f.replaceActor(app, promise)
-    watch(ref)
-
-    ref.underlyingActor.periodicalRetryKills.cancel()
-    ref ! RetryKills
-
-    for (i <- 0 until app.instances)
-      ref ! MesosStatusUpdateEvent("", Task.Id(s"task_$i"), "TASK_RUNNING", "", app.id, "", None, Nil, app.version.toString)
-
-    Await.result(promise.future, 5.seconds)
-    verify(f.queue).resetDelay(app)
-    verify(f.driver).killTask(taskA.launchedMesosId.get)
-    verify(f.driver, times(2)).killTask(taskB.launchedMesosId.get)
-
-    expectTerminated(ref)
-  }
-
   test("Wait until the tasks are killed") {
     val f = new Fixture
     val app = AppDefinition(id = "myApp".toPath, instances = 5, upgradeStrategy = UpgradeStrategy(0.0))
@@ -547,11 +505,12 @@ class TaskReplaceActorTest
     val deploymentsManager = mock[ActorRef]
     val deploymentStatus = mock[DeploymentStatus]
     val driver = mock[SchedulerDriver]
+    val killService = mock[TaskKillService]
     val queue = mock[LaunchQueue]
     val tracker = mock[TaskTracker]
     val readinessCheckExecutor: ReadinessCheckExecutor = mock[ReadinessCheckExecutor]
     def replaceActor(app: AppDefinition, promise: Promise[Unit]): TestActorRef[TaskReplaceActor] = TestActorRef(
-      TaskReplaceActor.props(deploymentsManager, deploymentStatus, driver, queue,
+      TaskReplaceActor.props(deploymentsManager, deploymentStatus, driver, killService, queue,
         tracker, system.eventStream, readinessCheckExecutor, app, promise)
     )
   }
