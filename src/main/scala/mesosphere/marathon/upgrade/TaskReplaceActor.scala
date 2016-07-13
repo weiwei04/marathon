@@ -9,14 +9,14 @@ import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.core.task.Task.Id
 import mesosphere.marathon.core.task.termination.TaskKillService
 import mesosphere.marathon.core.task.tracker.TaskTracker
-import mesosphere.marathon.event.{DeploymentStatus, HealthStatusChanged, MesosStatusUpdateEvent}
+import mesosphere.marathon.event.{ DeploymentStatus, HealthStatusChanged, MesosStatusUpdateEvent }
 import mesosphere.marathon.state.AppDefinition
 import mesosphere.marathon.upgrade.TaskReplaceActor._
 import org.apache.mesos.Protos.TaskID
 import org.apache.mesos.SchedulerDriver
 import org.slf4j.LoggerFactory
 
-import scala.collection.{SortedSet, mutable}
+import scala.collection.{ SortedSet, mutable }
 import scala.concurrent.Promise
 
 class TaskReplaceActor(

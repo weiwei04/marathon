@@ -22,15 +22,15 @@ trait TaskKillService {
     * Kill the given task. The implementation should add the task onto a queue that is processed
     * short term and will eventually kill the task.
     *
-    * @param task the task the shall be killed.
+    * @param taskId the id of the task that shall be killed.
     */
-  def kill(task: Task.Id): Unit
+  def kill(taskId: Task.Id): Unit
 
   /**
     * Kill the given task. See [[kill(task: Task.Id)]] The implementation should add the task onto
     * a queue that is processed short term and will eventually kill the task.
     *
-    * @param task the task the shall be killed.
+    * @param task the task that shall be killed.
     */
   def kill(task: Task): Unit
 }
