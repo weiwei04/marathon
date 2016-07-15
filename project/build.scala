@@ -279,7 +279,6 @@ object Dependencies {
     jerseyMultiPart % "compile",
     jettyEventSource % "compile",
     uuidGenerator % "compile",
-    jGraphT % "compile",
     hadoopHdfs % "compile",
     hadoopCommon % "compile",
     beanUtils % "compile",
@@ -297,6 +296,7 @@ object Dependencies {
     curatorFramework % "compile",
     java8Compat % "compile",
     logstash % "compile",
+    scalaGraph % "compile",
 
     // test
     Test.diffson % "test",
@@ -325,7 +325,6 @@ object Dependency {
     val JodaTime = "2.9.4"
     val JodaConvert = "1.8.1"
     val UUIDGenerator = "3.1.4"
-    val JGraphT = "0.9.3"
     val Hadoop = "2.7.2"
     val Diffson = "2.0.2"
     val PlayJson = "2.5.4"
@@ -340,6 +339,7 @@ object Dependency {
     val WixAccord = "0.5"
     val Curator = "2.10.0"
     val Java8Compat = "0.8.0-RC1"
+    val ScalaGraph = "1.11.0"
 
     // test deps versions
     val Mockito = "1.10.19"
@@ -368,7 +368,6 @@ object Dependency {
   val jodaConvert = "org.joda" % "joda-convert" % V.JodaConvert
   val twitterCommons = "com.twitter.common.zookeeper" % "candidate" % V.TwitterCommons
   val uuidGenerator = "com.fasterxml.uuid" % "java-uuid-generator" % V.UUIDGenerator
-  val jGraphT = "org.javabits.jgrapht" % "jgrapht-core" % V.JGraphT
   val hadoopHdfs = "org.apache.hadoop" % "hadoop-hdfs" % V.Hadoop excludeAll(excludeMortbayJetty, excludeJavaxServlet)
   val hadoopCommon = "org.apache.hadoop" % "hadoop-common" % V.Hadoop excludeAll(excludeMortbayJetty,
     excludeJavaxServlet)
@@ -386,6 +385,7 @@ object Dependency {
   val curatorClient = "org.apache.curator" % "curator-client" % V.Curator
   val curatorFramework = "org.apache.curator" % "curator-framework" % V.Curator
   val java8Compat = "org.scala-lang.modules" %% "scala-java8-compat" % V.Java8Compat
+  val scalaGraph = "com.assembla.scala-incubator" %% "graph-core" % V.ScalaGraph
 
   object Test {
     val scalatest = "org.scalatest" %% "scalatest" % V.ScalaTest

@@ -11,6 +11,7 @@ import org.apache.mesos.{ Protos => mesos }
 import org.scalatest.{ GivenWhenThen, Matchers }
 import com.wix.accord._
 
+import scala.collection.immutable.SortedMap
 import scala.collection.immutable.Seq
 
 class DeploymentPlanTest extends MarathonSpec with Matchers with GivenWhenThen with Mockito {
@@ -40,16 +41,16 @@ class DeploymentPlanTest extends MarathonSpec with Matchers with GivenWhenThen w
     )))
 
     When("the group's apps are grouped by the longest outbound path")
-    val partitionedApps = DeploymentPlan.appsGroupedByLongestPath(group)
+    val partitionedApps = SortedMap(DeploymentPlan.appsGroupedByLongestPath(group).toSeq: _*)
 
     Then("three equivalence classes should be computed")
     partitionedApps should have size (3)
 
+    partitionedApps.keySet should contain (0)
     partitionedApps.keySet should contain (1)
     partitionedApps.keySet should contain (2)
-    partitionedApps.keySet should contain (3)
 
-    partitionedApps(2) should have size (2)
+    partitionedApps(1) should have size (2)
   }
 
   test("partition a complex group's apps into concurrently deployable subsets") {
@@ -73,17 +74,17 @@ class DeploymentPlanTest extends MarathonSpec with Matchers with GivenWhenThen w
     )
 
     When("the group's apps are grouped by the longest outbound path")
-    val partitionedApps = DeploymentPlan.appsGroupedByLongestPath(group)
+    val partitionedApps = SortedMap(DeploymentPlan.appsGroupedByLongestPath(group).toSeq: _*)
 
     Then("three equivalence classes should be computed")
     partitionedApps should have size (4)
 
+    partitionedApps.keySet should contain (0)
     partitionedApps.keySet should contain (1)
     partitionedApps.keySet should contain (2)
     partitionedApps.keySet should contain (3)
-    partitionedApps.keySet should contain (4)
 
-    partitionedApps(1) should have size (2)
+    partitionedApps(0) should have size (2)
   }
 
   test("start from empty group") {
