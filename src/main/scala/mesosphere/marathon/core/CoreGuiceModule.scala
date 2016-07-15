@@ -49,6 +49,9 @@ class CoreGuiceModule extends AbstractModule {
   def taskTracker(coreModule: CoreModule): TaskTracker = coreModule.taskTrackerModule.taskTracker
 
   @Provides @Singleton
+  def taskKillService(coreModule: CoreModule) = coreModule.taskTerminationModule.taskKillService
+
+  @Provides @Singleton
   def taskCreationHandler(coreModule: CoreModule): TaskCreationHandler =
     coreModule.taskTrackerModule.taskCreationHandler
 

@@ -6,7 +6,7 @@ import mesosphere.marathon.core.task.termination.TaskKillService
 
 import scala.concurrent.{ Future, Promise }
 
-private[impl] class TaskKillServiceDelegate(actorRef: ActorRef) extends TaskKillService {
+private[termination] class TaskKillServiceDelegate(actorRef: ActorRef) extends TaskKillService {
   import TaskKillServiceActor._
 
   override def kill(tasks: Iterable[Task]): Future[Unit] = {

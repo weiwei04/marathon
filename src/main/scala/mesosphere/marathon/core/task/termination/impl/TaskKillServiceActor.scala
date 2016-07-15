@@ -108,7 +108,7 @@ private[impl] class TaskKillServiceActor(
   }
 }
 
-private[impl] object TaskKillServiceActor {
+private[termination] object TaskKillServiceActor {
 
   sealed trait Request
   case class KillTask(task: Task) extends Request
