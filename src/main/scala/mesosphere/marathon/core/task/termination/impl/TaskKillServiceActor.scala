@@ -79,7 +79,7 @@ private[impl] class TaskKillServiceActor(
   }
 
   private def processKills(): Unit = {
-    tasksToKill.view.foreach {
+    tasksToKill.foreach {
       case (taskId, Some(task)) if isLost(task) =>
         log.warning("Expunging lost task {} from state because it should be killed", taskId)
         // TODO: should we map into the future and handle the result?
