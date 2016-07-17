@@ -70,7 +70,6 @@ private[impl] class TaskKillServiceActor(
   def killTasks(tasks: Iterable[Task], promise: Promise[Unit]): Unit = {
     log.debug("Adding {} tasks to queue; setting up child actor to track progress", tasks.size)
     // TODO: watch children? Fail promises in postStop?
-    // TODO (urgent): this is hard to test. Add a factory that can create mocks in a test, or use a trait to talk to
     context.actorOf(TaskKillProgressActor.props(tasks.map(_.taskId), promise))
     tasks.foreach { task =>
       tasksToKill.update(task.taskId, Some(task))
@@ -83,8 +82,8 @@ private[impl] class TaskKillServiceActor(
       case (taskId, Some(task)) if isLost(task) =>
         log.warning("Expunging lost task {} from state because it should be killed", taskId)
         // TODO: should we map into the future and handle the result?
+        // we will eventually be notified of a taskStatusUpdate after the task has been expunged
         stateOpProcessor.process(TaskStateOp.ForceExpunge(taskId))
-      // we will eventually be notified of a taskStatusUpdate after the task has been expunged
 
       case (taskId, None) =>
         log.warning("Killing unknown {}", taskId)
@@ -99,7 +98,7 @@ private[impl] class TaskKillServiceActor(
 
   private def handleTerminal(taskId: Task.Id): Unit = {
     tasksToKill.remove(taskId)
-    log.info(s"$taskId is terminal. Waiting for ${tasksToKill.size} more tasks to be killed.")
+    log.info("{} is terminal. ({} kills unconfirmed)", taskId, tasksToKill.size)
   }
 
   private def isLost(task: Task): Boolean = {

@@ -5,6 +5,7 @@ import akka.testkit.{ ImplicitSender, TestActorRef, TestKit, TestProbe }
 import mesosphere.marathon.MarathonSchedulerDriverHolder
 import mesosphere.marathon.core.task.{ Task, TaskStateOp }
 import mesosphere.marathon.core.task.tracker.{ TaskStateOpProcessor, TaskTracker }
+import mesosphere.marathon.event.MesosStatusUpdateEvent
 import mesosphere.marathon.state.{ PathId, Timestamp }
 import mesosphere.marathon.test.Mockito
 import org.apache.mesos
@@ -12,7 +13,7 @@ import org.apache.mesos.SchedulerDriver
 import org.scalatest.concurrent.{ Eventually, ScalaFutures }
 import org.scalatest.{ BeforeAndAfterAll, BeforeAndAfterEach, FunSuiteLike, GivenWhenThen, Matchers }
 
-import scala.concurrent.Future
+import scala.concurrent.{ Future, Promise }
 
 class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     with FunSuiteLike
@@ -83,7 +84,7 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     val f = new Fixture
     val actor = f.createTaskKillActor()
 
-    Given("A single, known running task")
+    Given("a single, known running task")
     val task = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_LOST)
 
     When("the service is asked to kill that task")
@@ -94,6 +95,38 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
 
     And("the stateOpProcessor receives an expunge")
     verify(f.stateOpProcessor, timeout(500)).process(TaskStateOp.ForceExpunge(task.taskId))
+  }
+
+  test("kill multiple tasks") {
+    val f = new Fixture
+    val actor = f.createTaskKillActor()
+
+    Given("a list of tasks")
+    val runningTask = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+    val lostTask = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_LOST)
+    val stagingTask = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_STAGING)
+
+    When("the service is asked to kill those tasks")
+    val promise = Promise[Unit]()
+    actor ! TaskKillServiceActor.KillTasks(Seq(runningTask, lostTask, stagingTask), promise)
+
+    Then("the task tracker is not queried")
+    noMoreInteractions(f.taskTracker)
+
+    And("Eventually terminal status updates are published via the event stream")
+    f.publishStatusUpdate(runningTask, mesos.Protos.TaskState.TASK_KILLED)
+    f.publishStatusUpdate(lostTask, mesos.Protos.TaskState.TASK_LOST)
+    f.publishStatusUpdate(stagingTask, mesos.Protos.TaskState.TASK_LOST)
+
+    And("three kill requests are issued to the driver")
+    verify(f.driver, timeout(500)).killTask(runningTask.taskId.mesosTaskId)
+    verify(f.stateOpProcessor, timeout(500)).process(TaskStateOp.ForceExpunge(lostTask.taskId))
+    verify(f.driver, timeout(500)).killTask(stagingTask.taskId.mesosTaskId)
+    noMoreInteractions(f.driver)
+
+    Then("the promise is eventually completed successfully")
+    eventually(promise.isCompleted)
+    promise.future.futureValue should be (())
   }
 
   override protected def afterAll(): Unit = {
@@ -113,7 +146,6 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
 
   class Fixture {
     val appId = PathId("/test")
-    val taskId = Task.Id.forRunSpec(appId)
     val taskTracker: TaskTracker = mock[TaskTracker]
     val driver = mock[SchedulerDriver]
     val driverHolder: MarathonSchedulerDriverHolder = {
@@ -145,6 +177,15 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
       task
     }
     def now(): Timestamp = Timestamp(0)
+    def publishStatusUpdate(task: Task, state: mesos.Protos.TaskState): Unit = {
+      val appId = task.taskId.runSpecId
+      val statusUpdateEvent =
+        MesosStatusUpdateEvent(
+          slaveId = "", taskId = task.taskId, taskStatus = state.toString, message = "", appId = appId, host = "",
+          ipAddresses = None, ports = Nil, version = "version"
+        )
+      system.eventStream.publish(statusUpdateEvent)
+    }
   }
 }
 
