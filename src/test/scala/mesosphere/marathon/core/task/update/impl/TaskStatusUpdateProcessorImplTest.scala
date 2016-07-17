@@ -28,14 +28,13 @@ class TaskStatusUpdateProcessorImplTest
     val taskId = update.wrapped.stateOp.taskId
 
     Given("an unknown task")
-    import scala.concurrent.ExecutionContext.Implicits.global
-    f.taskTracker.task(taskId)(global) returns Future.successful(None)
+    f.taskTracker.task(taskId) returns Future.successful(None)
 
     When("we process the updated")
     f.updateProcessor.publish(status).futureValue
 
     Then("we expect that the appropriate taskTracker methods have been called")
-    verify(f.taskTracker).task(taskId)(global)
+    verify(f.taskTracker).task(taskId)
 
     And("the task kill gets initiated")
     verify(f.schedulerDriver).killTask(status.getTaskId)
@@ -54,8 +53,7 @@ class TaskStatusUpdateProcessorImplTest
     val taskId = update.wrapped.stateOp.taskId
 
     Given("an unknown task")
-    import scala.concurrent.ExecutionContext.Implicits.global
-    f.taskTracker.task(taskId)(global) returns Future.successful(
+    f.taskTracker.task(taskId) returns Future.successful(
       Some(MarathonTestHelper.minimalReservedTask(
         taskId.runSpecId, Task.Reservation(Iterable.empty, MarathonTestHelper.taskReservationStateNew)))
     )
@@ -64,7 +62,7 @@ class TaskStatusUpdateProcessorImplTest
     f.updateProcessor.publish(status).futureValue
 
     Then("we expect that the appropriate taskTracker methods have been called")
-    verify(f.taskTracker).task(taskId)(global)
+    verify(f.taskTracker).task(taskId)
 
     And("the task kill gets initiated")
     verify(f.schedulerDriver).killTask(status.getTaskId)
@@ -84,14 +82,13 @@ class TaskStatusUpdateProcessorImplTest
     val taskId = update.wrapped.stateOp.taskId
 
     Given("an unknown task")
-    import scala.concurrent.ExecutionContext.Implicits.global
-    f.taskTracker.task(taskId)(global) returns Future.successful(None)
+    f.taskTracker.task(taskId) returns Future.successful(None)
 
     When("we process the update")
     f.updateProcessor.publish(status).futureValue
 
     Then("we expect that the appropriate taskTracker methods have been called")
-    verify(f.taskTracker).task(taskId)(global)
+    verify(f.taskTracker).task(taskId)
 
     And("the update has been acknowledged")
     verify(f.schedulerDriver).acknowledgeStatusUpdate(status)
@@ -107,17 +104,15 @@ class TaskStatusUpdateProcessorImplTest
     val task = MarathonTestHelper.runningTask(taskId.idString)
     val origUpdate = TaskStatusUpdateTestHelper.killing(task)
     val status = origUpdate.status
-    val update = origUpdate
 
     Given("an unknown task")
-    import scala.concurrent.ExecutionContext.Implicits.global
-    f.taskTracker.task(taskId)(global) returns Future.successful(None)
+    f.taskTracker.task(taskId) returns Future.successful(None)
 
     When("we process the update")
     f.updateProcessor.publish(status).futureValue
 
     Then("we expect that the appropriate taskTracker methods have been called")
-    verify(f.taskTracker).task(taskId)(global)
+    verify(f.taskTracker).task(taskId)
 
     And("the update has been acknowledged")
     verify(f.schedulerDriver).acknowledgeStatusUpdate(status)
@@ -136,15 +131,14 @@ class TaskStatusUpdateProcessorImplTest
     val expectedTaskStateOp = TaskStateOp.MesosUpdate(task, MarathonTaskStatus(status), f.clock.now())
 
     Given("a task")
-    import scala.concurrent.ExecutionContext.Implicits.global
-    f.taskTracker.task(taskId)(global) returns Future.successful(Some(task))
+    f.taskTracker.task(taskId) returns Future.successful(Some(task))
     f.stateOpProcessor.process(expectedTaskStateOp) returns Future.successful(TaskStateChange.Update(task, Some(task)))
 
     When("receive a TASK_KILLING update")
     f.updateProcessor.publish(status).futureValue
 
     Then("the task is loaded from the taskTracker")
-    verify(f.taskTracker).task(taskId)(global)
+    verify(f.taskTracker).task(taskId)
 
     And("a MesosStatusUpdateEvent is passed to the stateOpProcessor")
     verify(f.stateOpProcessor).process(expectedTaskStateOp)

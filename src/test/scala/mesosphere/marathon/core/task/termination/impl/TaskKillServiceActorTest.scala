@@ -45,15 +45,13 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
 
     Given("a single running task")
     val task = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+    f.taskTracker.task(task.taskId) returns Future.successful(Some(task))
 
     When("the service is asked to kill that taskId")
     actor ! TaskKillServiceActor.KillTaskById(task.taskId)
 
-    //    import scala.concurrent.ExecutionContext.Implicits._
     Then("it will fetch the task from the taskTracker")
-    //    f.taskTracker.task(task.taskId) returns Future.successful(Some(task))
-    f.taskTracker.task(any)(any) returns Future.successful(Some(task))
-    //    verify(f.taskTracker, times(1)).task(eq(task.taskId))(any)
+    verify(f.taskTracker, times(1)).task(eq(task.taskId))
     noMoreInteractions(f.taskTracker)
 
     And("a kill is issued to the driver")
@@ -61,19 +59,19 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     noMoreInteractions(f.driver)
   }
 
-  ignore("Kill single unknown task by ID") {
+  test("Kill single unknown task by ID") {
     val f = new Fixture
     val actor = f.createTaskKillActor()
 
     Given("an unknown taskId")
     val taskId = Task.Id.forRunSpec(PathId("/unknown"))
+    f.taskTracker.task(eq(taskId)) returns Future.successful(None)
 
     When("the service is asked to kill that taskId")
     actor ! TaskKillServiceActor.KillTaskById(taskId)
 
     Then("it will fetch the task from the taskTracker")
-    f.taskTracker.task(eq(taskId))(any) returns Future.successful(None)
-    //    verify(f.taskTracker, times(1)).task(eq(taskId))(any)
+    verify(f.taskTracker, times(1)).task(eq(taskId))
     noMoreInteractions(f.taskTracker)
 
     And("a kill is issued to the driver")
