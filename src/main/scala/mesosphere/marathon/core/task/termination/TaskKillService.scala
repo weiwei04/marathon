@@ -5,6 +5,7 @@ import mesosphere.marathon.core.task.Task
 import scala.concurrent.Future
 
 // TODO: do we favor distinct vs overloaded functions?
+// TODO: explicitly kill unknownTask so that the service won't attempt to load it from state?
 trait TaskKillService {
 
   /**

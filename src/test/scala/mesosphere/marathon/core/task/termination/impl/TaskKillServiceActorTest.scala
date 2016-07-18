@@ -3,18 +3,20 @@ package mesosphere.marathon.core.task.termination.impl
 import akka.actor.{ ActorRef, ActorSystem }
 import akka.testkit.{ ImplicitSender, TestActorRef, TestKit, TestProbe }
 import mesosphere.marathon.MarathonSchedulerDriverHolder
-import mesosphere.marathon.core.task.{ Task, TaskStateOp }
+import mesosphere.marathon.core.base.ConstantClock
+import mesosphere.marathon.core.task.termination.TaskKillConfig
 import mesosphere.marathon.core.task.tracker.{ TaskStateOpProcessor, TaskTracker }
+import mesosphere.marathon.core.task.{ Task, TaskStateOp }
 import mesosphere.marathon.event.MesosStatusUpdateEvent
 import mesosphere.marathon.state.{ PathId, Timestamp }
 import mesosphere.marathon.test.Mockito
-import mesosphere.marathon.upgrade.UpgradeConfig
 import org.apache.mesos
 import org.apache.mesos.SchedulerDriver
 import org.scalatest.concurrent.{ Eventually, ScalaFutures }
 import org.scalatest.time.{ Millis, Span }
 import org.scalatest.{ BeforeAndAfterAll, BeforeAndAfterEach, FunSuiteLike, GivenWhenThen, Matchers }
 
+import scala.concurrent.duration._
 import scala.concurrent.{ Future, Promise }
 
 class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
@@ -203,6 +205,32 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     noMoreInteractions(f.driver)
   }
 
+  test("kills will be retried") {
+    val f = new Fixture
+    val actor = f.createTaskKillActor()
+
+    Given("a single, known running task")
+    val task = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+
+    When("the service is asked to kill that task")
+    actor ! TaskKillServiceActor.KillTask(task)
+
+    Then("a kill is issued to the driver")
+    verify(f.driver, timeout(500)).killTask(task.taskId.mesosTaskId)
+
+    When("no statusUpdate is received and we reach the future")
+    f.clock.+=(10.seconds)
+
+    Then("the service will eventually retry")
+    verify(f.driver, timeout(1000)).killTask(task.taskId.mesosTaskId)
+
+    When("no statusUpdate is received and we reach the future")
+    f.clock.+=(10.seconds)
+
+    Then("the service will eventually expunge the task if it reached the max attempts")
+    verify(f.stateOpProcessor, timeout(1000)).process(TaskStateOp.ForceExpunge(task.taskId))
+  }
+
   override protected def afterAll(): Unit = {
     shutdown()
   }
@@ -229,16 +257,19 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
       holder.driver = Some(driver)
       holder
     }
-    val config: UpgradeConfig = new UpgradeConfig {
+    val config: TaskKillConfig = new TaskKillConfig {
       import scala.concurrent.duration._
-      override def killBatchCycle: FiniteDuration = 10.seconds
-      override def killBatchSize: Int = 5
+      override def killChunkSize: Int = 5
+      override def killRetryTimeout: FiniteDuration = 500.millis
+      override def killRetryMax: Int = 1
     }
     val stateOpProcessor: TaskStateOpProcessor = mock[TaskStateOpProcessor]
     val parent = TestProbe()
+    val clock = ConstantClock()
+
     def createTaskKillActor(): ActorRef = {
       import TaskKillServiceActorTest._
-      val actorRef: ActorRef = TestActorRef(TaskKillServiceActor.props(taskTracker, driverHolder, stateOpProcessor, config), parent.ref, "TaskKillService")
+      val actorRef: ActorRef = TestActorRef(TaskKillServiceActor.props(taskTracker, driverHolder, stateOpProcessor, config, clock), parent.ref, "TaskKillService")
       actor = Some(actorRef)
       actorRef
     }

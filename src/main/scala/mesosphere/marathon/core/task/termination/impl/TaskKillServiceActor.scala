@@ -1,16 +1,17 @@
 package mesosphere.marathon.core.task.termination.impl
 
-import akka.actor.{Actor, ActorLogging, Props}
+import akka.actor.{ Actor, ActorLogging, Cancellable, Props }
 import mesosphere.marathon.MarathonSchedulerDriverHolder
-import mesosphere.marathon.core.task.tracker.{TaskStateOpProcessor, TaskTracker}
-import mesosphere.marathon.core.task.{Task, TaskStateOp}
+import mesosphere.marathon.core.base.Clock
+import mesosphere.marathon.core.task.termination.TaskKillConfig
+import mesosphere.marathon.core.task.tracker.{ TaskStateOpProcessor, TaskTracker }
+import mesosphere.marathon.core.task.{ Task, TaskStateOp }
 import mesosphere.marathon.event.MesosStatusUpdateEvent
-import mesosphere.marathon.upgrade.UpgradeConfig
+import mesosphere.marathon.state.Timestamp
 
 import scala.collection.mutable
 import scala.concurrent.Promise
 
-// TODO: retry kills
 /**
   * An actor that handles killing tasks in chunks and depending on the task state.
   * Lost tasks will simply be expunged from state, while active tasks will be killed
@@ -21,12 +22,14 @@ private[impl] class TaskKillServiceActor(
     taskTracker: TaskTracker,
     driverHolder: MarathonSchedulerDriverHolder,
     stateOpProcessor: TaskStateOpProcessor,
-    config: UpgradeConfig) extends Actor with ActorLogging {
+    config: TaskKillConfig,
+    clock: Clock) extends Actor with ActorLogging {
   import TaskKillServiceActor._
+  import context.dispatcher
 
   val tasksToKill: mutable.HashMap[Task.Id, Option[Task]] = mutable.HashMap.empty
-  val inFlight: mutable.HashMap[Task.Id, Option[Task]] = mutable.HashMap.empty
-  val chunkSize: Int = config.killBatchSize
+  val inFlight: mutable.HashMap[Task.Id, TaskToKill] = mutable.HashMap.empty
+  var retryTimer: Option[Cancellable] = None
 
   override def preStart(): Unit = {
     context.system.eventStream.subscribe(self, classOf[MesosStatusUpdateEvent])
@@ -47,6 +50,9 @@ private[impl] class TaskKillServiceActor(
 
     case Terminal(event) if tasksToKill.contains(event.taskId) =>
       handleTerminal(event.taskId)
+
+    case Retry =>
+      retry()
 
     case unhandled: Request =>
       log.warning("Received unhandled {}", unhandled)
@@ -87,21 +93,22 @@ private[impl] class TaskKillServiceActor(
   }
 
   private def processKills(): Unit = {
-    val killCount = chunkSize - inFlight.size
+    val killCount = config.killChunkSize - inFlight.size
     val toKillNow = tasksToKill.take(killCount)
-    log.info("chunkSize: {}, inFlight: {}, killCount: {}, toKillNow.size: {}", chunkSize, inFlight.size, killCount, tasksToKill.size)
 
     log.info("processing {} kills", toKillNow.size)
     toKillNow.foreach {
       case (taskId, maybeTask) => processKill(taskId, maybeTask)
     }
+
+    retryTimer = Some(context.system.scheduler.scheduleOnce(config.killRetryTimeout, self, Retry))
   }
 
   def processKill(taskId: Task.Id, maybeTask: Option[Task]): Unit = {
     val taskIsLost: Boolean = maybeTask.fold(false)(isLost)
 
     if (taskIsLost) {
-      log.warning("Expunging lost task {} from state because it should be killed", taskId)
+      log.warning("Expunging lost {} from state because it should be killed", taskId)
       // TODO: should we map into the future and handle the result?
       // we will eventually be notified of a taskStatusUpdate after the task has been expunged
       stateOpProcessor.process(TaskStateOp.ForceExpunge(taskId))
@@ -111,7 +118,8 @@ private[impl] class TaskKillServiceActor(
       driverHolder.driver.map(_.killTask(taskId.mesosTaskId))
     }
 
-    inFlight.update(taskId, maybeTask)
+    val attempts = inFlight.get(taskId).fold(1)(_.attempts + 1)
+    inFlight.update(taskId, TaskToKill(taskId, maybeTask, issued = clock.now(), attempts))
     tasksToKill.remove(taskId)
   }
 
@@ -120,6 +128,28 @@ private[impl] class TaskKillServiceActor(
     inFlight.remove(taskId)
     log.debug("{} is terminal. ({} kills queued, {} in flight)", taskId, tasksToKill.size, inFlight.size)
     processKills()
+  }
+
+  def retry(): Unit = {
+    val now = clock.now()
+
+    inFlight.foreach {
+      case (taskId, taskToKill) if taskToKill.attempts >= config.killRetryMax =>
+        log.warning("Expunging {} from state: max retries reached", taskId)
+        stateOpProcessor.process(TaskStateOp.ForceExpunge(taskId))
+
+      case (taskId, taskToKill) if (taskToKill.issued + config.killRetryTimeout) < now =>
+        log.warning("No kill ack received for {}, retrying", taskId)
+        processKill(taskId, taskToKill.maybeTask)
+
+      case _ => // ignore
+    }
+
+    if (inFlight.nonEmpty) {
+      retryTimer = Some(context.system.scheduler.scheduleOnce(config.killRetryTimeout, self, Retry))
+    } else {
+      retryTimer = None
+    }
   }
 
   def isLost(task: Task): Boolean = {
@@ -134,12 +164,18 @@ private[termination] object TaskKillServiceActor {
   case class KillTask(task: Task) extends Request
   case class KillTasks(tasks: Iterable[Task], promise: Promise[Unit]) extends Request
   case class KillTaskById(taskId: Task.Id) extends Request
-  case class KillUnknownTaskById(taskId: Task.Id) extends Request
+
+  sealed trait InternalRequest
+  case class KillUnknownTaskById(taskId: Task.Id) extends InternalRequest
+  case object Retry extends InternalRequest
+
+  case class TaskToKill(taskId: Task.Id, maybeTask: Option[Task], issued: Timestamp, attempts: Int)
 
   def props(
     taskTracker: TaskTracker,
     driverHolder: MarathonSchedulerDriverHolder,
     stateOpProcessor: TaskStateOpProcessor,
-    config: UpgradeConfig): Props = Props(
-    new TaskKillServiceActor(taskTracker, driverHolder, stateOpProcessor, config))
+    config: TaskKillConfig,
+    clock: Clock): Props = Props(
+    new TaskKillServiceActor(taskTracker, driverHolder, stateOpProcessor, config, clock))
 }

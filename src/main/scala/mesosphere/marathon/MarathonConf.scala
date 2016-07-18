@@ -1,25 +1,27 @@
 package mesosphere.marathon
 
-import mesosphere.marathon.core.flow.{ ReviveOffersConfig, LaunchTokenConfig }
+import mesosphere.marathon.core.flow.{ LaunchTokenConfig, ReviveOffersConfig }
 import mesosphere.marathon.core.launcher.OfferProcessorConfig
 import mesosphere.marathon.core.launchqueue.LaunchQueueConfig
 import mesosphere.marathon.core.matcher.manager.OfferMatcherManagerConfig
 import mesosphere.marathon.core.plugin.PluginManagerConfiguration
 import mesosphere.marathon.core.task.jobs.TaskJobsConfig
+import mesosphere.marathon.core.task.termination.TaskKillConfig
 import mesosphere.marathon.core.task.tracker.TaskTrackerConfig
 import mesosphere.marathon.core.task.update.TaskStatusUpdateConfig
 import mesosphere.marathon.state.ResourceRole
 import mesosphere.marathon.upgrade.UpgradeConfig
 import org.rogach.scallop.ScallopConf
-import scala.sys.SystemProperties
 
+import scala.sys.SystemProperties
 import mesosphere.marathon.io.storage.StorageProvider
 
 trait MarathonConf
     extends ScallopConf with ZookeeperConf with LeaderProxyConf
     with LaunchTokenConfig with OfferMatcherManagerConfig with OfferProcessorConfig with ReviveOffersConfig
     with MarathonSchedulerServiceConfig with LaunchQueueConfig with PluginManagerConfiguration
-    with TaskStatusUpdateConfig with TaskTrackerConfig with UpgradeConfig with TaskJobsConfig {
+    with TaskStatusUpdateConfig with TaskTrackerConfig with UpgradeConfig with TaskJobsConfig
+    with TaskKillConfig {
 
   //scalastyle:off magic.number
 
