@@ -11,6 +11,7 @@ import mesosphere.marathon.test.Mockito
 import org.apache.mesos
 import org.apache.mesos.SchedulerDriver
 import org.scalatest.concurrent.{ Eventually, ScalaFutures }
+import org.scalatest.time.{ Millis, Span }
 import org.scalatest.{ BeforeAndAfterAll, BeforeAndAfterEach, FunSuiteLike, GivenWhenThen, Matchers }
 
 import scala.concurrent.{ Future, Promise }
@@ -52,7 +53,7 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     actor ! TaskKillServiceActor.KillTaskById(task.taskId)
 
     Then("it will fetch the task from the taskTracker")
-    verify(f.taskTracker, times(1)).task(eq(task.taskId))
+    verify(f.taskTracker, timeout(500)).task(eq(task.taskId))
     noMoreInteractions(f.taskTracker)
 
     And("a kill is issued to the driver")
@@ -72,7 +73,7 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     actor ! TaskKillServiceActor.KillTaskById(taskId)
 
     Then("it will fetch the task from the taskTracker")
-    verify(f.taskTracker, times(1)).task(eq(taskId))
+    verify(f.taskTracker, timeout(500)).task(eq(taskId))
     noMoreInteractions(f.taskTracker)
 
     And("a kill is issued to the driver")
@@ -113,20 +114,41 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     Then("the task tracker is not queried")
     noMoreInteractions(f.taskTracker)
 
-    And("Eventually terminal status updates are published via the event stream")
-    f.publishStatusUpdate(runningTask, mesos.Protos.TaskState.TASK_KILLED)
-    f.publishStatusUpdate(lostTask, mesos.Protos.TaskState.TASK_LOST)
-    f.publishStatusUpdate(stagingTask, mesos.Protos.TaskState.TASK_LOST)
-
     And("three kill requests are issued to the driver")
     verify(f.driver, timeout(500)).killTask(runningTask.taskId.mesosTaskId)
     verify(f.stateOpProcessor, timeout(500)).process(TaskStateOp.ForceExpunge(lostTask.taskId))
     verify(f.driver, timeout(500)).killTask(stagingTask.taskId.mesosTaskId)
     noMoreInteractions(f.driver)
 
+    And("Eventually terminal status updates are published via the event stream")
+    f.publishStatusUpdate(runningTask, mesos.Protos.TaskState.TASK_KILLED)
+    f.publishStatusUpdate(lostTask, mesos.Protos.TaskState.TASK_LOST)
+    f.publishStatusUpdate(stagingTask, mesos.Protos.TaskState.TASK_LOST)
+
     Then("the promise is eventually completed successfully")
     eventually(promise.isCompleted)
     promise.future.futureValue should be (())
+  }
+
+  test("subsequent kill messages are processed once each") {
+    val f = new Fixture
+    val actor = f.createTaskKillActor()
+
+    Given("multiple single kill requests")
+    val task1 = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+    val task2 = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+    val task3 = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+
+    When("the service is asked subsequently to kill those tasks")
+    actor ! TaskKillServiceActor.KillTask(task1)
+    actor ! TaskKillServiceActor.KillTask(task2)
+    actor ! TaskKillServiceActor.KillTask(task3)
+
+    Then("exactly 3 kills are issued to the driver")
+    verify(f.driver, timeout(500)).killTask(task1.taskId.mesosTaskId)
+    verify(f.driver, timeout(500)).killTask(task2.taskId.mesosTaskId)
+    verify(f.driver, timeout(500)).killTask(task3.taskId.mesosTaskId)
+    noMoreInteractions(f.driver)
   }
 
   override protected def afterAll(): Unit = {
@@ -143,6 +165,8 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
         fail(msg)
     }
   }
+
+  override implicit def patienceConfig: PatienceConfig = PatienceConfig(timeout = scaled(Span(300, Millis)))
 
   class Fixture {
     val appId = PathId("/test")

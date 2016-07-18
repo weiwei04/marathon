@@ -18,13 +18,15 @@ import scala.util.Try
   */
 class TaskKillProgressActor(taskIds: mutable.HashSet[Task.Id], promise: Promise[Unit]) extends Actor with ActorLogging {
   // TODO: should we timeout at some point? Retrying kills should be covered by the TaskKillService.
+  // TODO: if one of the watched task is reported terminal before this actor subscribed to the event bus,
+  //       it won't receive that event. should we reconcile tasks after a certain amount of time?
 
   // this should be used for logging to prevent polluting the logs
   val name = "TaskKillProgressActor" + self.hashCode()
 
   override def preStart(): Unit = {
     context.system.eventStream.subscribe(self, classOf[MesosStatusUpdateEvent])
-    log.debug("Starting {} to track kill progress of {} tasks", name, taskIds.size)
+    log.info("Starting {} to track kill progress of {} tasks", name, taskIds.size)
   }
 
   override def postStop(): Unit = {
