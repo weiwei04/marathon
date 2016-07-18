@@ -82,7 +82,7 @@ class CoreModuleImpl @Inject() (
 
   // this one can't be lazy right now because it wouldn't be instantiated soon enough ...
   override val taskTerminationModule = new TaskTerminationModule(
-    taskTrackerModule, leadershipModule, marathonSchedulerDriverHolder)
+    taskTrackerModule, leadershipModule, marathonSchedulerDriverHolder, marathonConf)
 
   // OFFER MATCHING AND LAUNCHING TASKS
 

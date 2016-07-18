@@ -1,23 +1,32 @@
 package mesosphere.marathon.core.task.termination.impl
 
-import akka.actor.{ Actor, ActorLogging, Props }
+import akka.actor.{Actor, ActorLogging, Props}
 import mesosphere.marathon.MarathonSchedulerDriverHolder
-import mesosphere.marathon.core.task.{ Task, TaskStateOp }
-import mesosphere.marathon.core.task.tracker.{ TaskStateOpProcessor, TaskTracker }
+import mesosphere.marathon.core.task.tracker.{TaskStateOpProcessor, TaskTracker}
+import mesosphere.marathon.core.task.{Task, TaskStateOp}
 import mesosphere.marathon.event.MesosStatusUpdateEvent
+import mesosphere.marathon.upgrade.UpgradeConfig
 
 import scala.collection.mutable
 import scala.concurrent.Promise
 
-// TODO: kill in batches
 // TODO: retry kills
+/**
+  * An actor that handles killing tasks in chunks and depending on the task state.
+  * Lost tasks will simply be expunged from state, while active tasks will be killed
+  * via the scheduler driver. There is be a maximum number of kills in flight, and
+  * the service will only issue more kills when tasks are reported terminal.
+  */
 private[impl] class TaskKillServiceActor(
     taskTracker: TaskTracker,
     driverHolder: MarathonSchedulerDriverHolder,
-    stateOpProcessor: TaskStateOpProcessor) extends Actor with ActorLogging {
+    stateOpProcessor: TaskStateOpProcessor,
+    config: UpgradeConfig) extends Actor with ActorLogging {
   import TaskKillServiceActor._
 
-  private[this] val tasksToKill: mutable.HashMap[Task.Id, Option[Task]] = mutable.HashMap.empty
+  val tasksToKill: mutable.HashMap[Task.Id, Option[Task]] = mutable.HashMap.empty
+  val inFlight: mutable.HashMap[Task.Id, Option[Task]] = mutable.HashMap.empty
+  val chunkSize: Int = config.killBatchSize
 
   override def preStart(): Unit = {
     context.system.eventStream.subscribe(self, classOf[MesosStatusUpdateEvent])
@@ -78,30 +87,42 @@ private[impl] class TaskKillServiceActor(
   }
 
   private def processKills(): Unit = {
-    tasksToKill.foreach {
-      case (taskId, Some(task)) if isLost(task) =>
-        log.warning("Expunging lost task {} from state because it should be killed", taskId)
-        // TODO: should we map into the future and handle the result?
-        // we will eventually be notified of a taskStatusUpdate after the task has been expunged
-        stateOpProcessor.process(TaskStateOp.ForceExpunge(taskId))
+    val killCount = chunkSize - inFlight.size
+    val toKillNow = tasksToKill.take(killCount)
+    log.info("chunkSize: {}, inFlight: {}, killCount: {}, toKillNow.size: {}", chunkSize, inFlight.size, killCount, tasksToKill.size)
 
-      case (taskId, None) =>
-        log.warning("Killing unknown {}", taskId)
-        driverHolder.driver.map(_.killTask(taskId.mesosTaskId))
-
-      case (taskId, _) =>
-        log.warning("Killing {}", taskId)
-        // TODO: evaluate the status?
-        driverHolder.driver.map(_.killTask(taskId.mesosTaskId))
+    log.info("processing {} kills", toKillNow.size)
+    toKillNow.foreach {
+      case (taskId, maybeTask) => processKill(taskId, maybeTask)
     }
   }
 
-  private def handleTerminal(taskId: Task.Id): Unit = {
+  def processKill(taskId: Task.Id, maybeTask: Option[Task]): Unit = {
+    val taskIsLost: Boolean = maybeTask.fold(false)(isLost)
+
+    if (taskIsLost) {
+      log.warning("Expunging lost task {} from state because it should be killed", taskId)
+      // TODO: should we map into the future and handle the result?
+      // we will eventually be notified of a taskStatusUpdate after the task has been expunged
+      stateOpProcessor.process(TaskStateOp.ForceExpunge(taskId))
+    } else {
+      val knownOrNot = if (maybeTask.isDefined) "known" else "unknown"
+      log.warning("Killing {} {}", knownOrNot, taskId)
+      driverHolder.driver.map(_.killTask(taskId.mesosTaskId))
+    }
+
+    inFlight.update(taskId, maybeTask)
     tasksToKill.remove(taskId)
-    log.info("{} is terminal. ({} kills unconfirmed)", taskId, tasksToKill.size)
   }
 
-  private def isLost(task: Task): Boolean = {
+  def handleTerminal(taskId: Task.Id): Unit = {
+    tasksToKill.remove(taskId)
+    inFlight.remove(taskId)
+    log.debug("{} is terminal. ({} kills queued, {} in flight)", taskId, tasksToKill.size, inFlight.size)
+    processKills()
+  }
+
+  def isLost(task: Task): Boolean = {
     import org.apache.mesos
     task.mesosStatus.fold(false)(_.getState == mesos.Protos.TaskState.TASK_LOST)
   }
@@ -115,11 +136,10 @@ private[termination] object TaskKillServiceActor {
   case class KillTaskById(taskId: Task.Id) extends Request
   case class KillUnknownTaskById(taskId: Task.Id) extends Request
 
-  //  case class TaskKillStatus(taskId: Task.Id, task: Option[Task], lastKillRequest: Timestamp)
-
   def props(
     taskTracker: TaskTracker,
     driverHolder: MarathonSchedulerDriverHolder,
-    stateOpProcessor: TaskStateOpProcessor): Props = Props(
-    new TaskKillServiceActor(taskTracker, driverHolder, stateOpProcessor))
+    stateOpProcessor: TaskStateOpProcessor,
+    config: UpgradeConfig): Props = Props(
+    new TaskKillServiceActor(taskTracker, driverHolder, stateOpProcessor, config))
 }

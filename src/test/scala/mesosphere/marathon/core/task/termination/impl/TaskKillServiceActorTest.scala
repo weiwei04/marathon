@@ -8,6 +8,7 @@ import mesosphere.marathon.core.task.tracker.{ TaskStateOpProcessor, TaskTracker
 import mesosphere.marathon.event.MesosStatusUpdateEvent
 import mesosphere.marathon.state.{ PathId, Timestamp }
 import mesosphere.marathon.test.Mockito
+import mesosphere.marathon.upgrade.UpgradeConfig
 import org.apache.mesos
 import org.apache.mesos.SchedulerDriver
 import org.scalatest.concurrent.{ Eventually, ScalaFutures }
@@ -98,7 +99,7 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     verify(f.stateOpProcessor, timeout(500)).process(TaskStateOp.ForceExpunge(task.taskId))
   }
 
-  test("kill multiple tasks") {
+  test("kill multiple tasks at once (with promise)") {
     val f = new Fixture
     val actor = f.createTaskKillActor()
 
@@ -130,11 +131,11 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     promise.future.futureValue should be (())
   }
 
-  test("subsequent kill messages are processed once each") {
+  test("kill multiple tasks subsequently (without promise)") {
     val f = new Fixture
     val actor = f.createTaskKillActor()
 
-    Given("multiple single kill requests")
+    Given("multiple tasks")
     val task1 = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
     val task2 = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
     val task3 = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
@@ -148,6 +149,57 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     verify(f.driver, timeout(500)).killTask(task1.taskId.mesosTaskId)
     verify(f.driver, timeout(500)).killTask(task2.taskId.mesosTaskId)
     verify(f.driver, timeout(500)).killTask(task3.taskId.mesosTaskId)
+    noMoreInteractions(f.driver)
+  }
+
+  test("killing tasks is throttled (single requests)") {
+    val f = new Fixture
+    val actor = f.createTaskKillActor()
+
+    Given("multiple tasks")
+    val tasks = (1 to 10).map { index =>
+      f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+    }
+
+    When("the service is asked to kill those tasks")
+    tasks.foreach { task =>
+      actor ! TaskKillServiceActor.KillTask(task)
+    }
+
+    Then("5 kills are issued immediately to the driver")
+    verify(f.driver, times(5)).killTask(any)
+
+    And("after receiving remaining terminal messages, all the tasks are killed eventually")
+    tasks.foreach { task =>
+      f.publishStatusUpdate(task, mesos.Protos.TaskState.TASK_KILLED)
+    }
+
+    verify(f.driver, times(5)).killTask(any)
+    noMoreInteractions(f.driver)
+  }
+
+  test("killing tasks is throttled (batch request)") {
+    val f = new Fixture
+    val actor = f.createTaskKillActor()
+
+    Given("multiple tasks")
+    val tasks = (1 to 10).map { index =>
+      f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+    }
+
+    When("the service is asked to kill those tasks")
+    val promise = Promise[Unit]()
+    actor ! TaskKillServiceActor.KillTasks(tasks, promise)
+
+    Then("5 kills are issued immediately to the driver")
+    verify(f.driver, times(5)).killTask(any)
+
+    And("after receiving remaining terminal messages, all the tasks are killed eventually")
+    tasks.foreach { task =>
+      f.publishStatusUpdate(task, mesos.Protos.TaskState.TASK_KILLED)
+    }
+
+    verify(f.driver, times(5)).killTask(any)
     noMoreInteractions(f.driver)
   }
 
@@ -177,13 +229,16 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
       holder.driver = Some(driver)
       holder
     }
+    val config: UpgradeConfig = new UpgradeConfig {
+      import scala.concurrent.duration._
+      override def killBatchCycle: FiniteDuration = 10.seconds
+      override def killBatchSize: Int = 5
+    }
     val stateOpProcessor: TaskStateOpProcessor = mock[TaskStateOpProcessor]
-    //    val persistenceActor = TestProbe()
-    //    val persistenceActorFactory: (JobRunId, ActorContext) => ActorRef = (_, context) => persistenceActor.ref
     val parent = TestProbe()
     def createTaskKillActor(): ActorRef = {
       import TaskKillServiceActorTest._
-      val actorRef: ActorRef = TestActorRef(TaskKillServiceActor.props(taskTracker, driverHolder, stateOpProcessor), parent.ref, "TaskKillService")
+      val actorRef: ActorRef = TestActorRef(TaskKillServiceActor.props(taskTracker, driverHolder, stateOpProcessor, config), parent.ref, "TaskKillService")
       actor = Some(actorRef)
       actorRef
     }
