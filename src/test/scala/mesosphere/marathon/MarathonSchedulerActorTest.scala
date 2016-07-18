@@ -461,7 +461,6 @@ class MarathonSchedulerActorTest extends MarathonActorSupport
     schedulerActor ! MarathonSchedulerActor.ReconcileTasks
     schedulerActor ! MarathonSchedulerActor.ReconcileTasks
 
-    actions.reconcileTasks(any) returns reconciliationPromise.future
     reconciliationPromise.success(Status.DRIVER_RUNNING)
 
     expectMsg(MarathonSchedulerActor.TasksReconciled)
