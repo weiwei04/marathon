@@ -10,14 +10,14 @@ import scala.collection.mutable
 import scala.util.Try
 
 /**
-  * Actor implementation that watches over a given set of taskIds and completes a promise when all
-  * tasks have been reported terminal (including LOST et al)
+  * This actor watches over a given set of taskIds and completes a promise when
+  * all tasks have been reported terminal (including LOST et al)
   *
   * @param taskIds the taskIds that shall be watched.
-  * @param promise the promise that shall be completed when all tasks have been reported terminal.
+  * @param promise the promise that shall be completed when all tasks have been
+  *                reported terminal.
   */
 class TaskKillProgressActor(taskIds: mutable.HashSet[Task.Id], promise: Promise[Unit]) extends Actor with ActorLogging {
-  // TODO: should we timeout at some point? Retrying kills should be covered by the TaskKillService.
   // TODO: if one of the watched task is reported terminal before this actor subscribed to the event bus,
   //       it won't receive that event. should we reconcile tasks after a certain amount of time?
 
@@ -25,8 +25,14 @@ class TaskKillProgressActor(taskIds: mutable.HashSet[Task.Id], promise: Promise[
   val name = "TaskKillProgressActor" + self.hashCode()
 
   override def preStart(): Unit = {
-    context.system.eventStream.subscribe(self, classOf[MesosStatusUpdateEvent])
-    log.info("Starting {} to track kill progress of {} tasks", name, taskIds.size)
+    if (taskIds.nonEmpty) {
+      context.system.eventStream.subscribe(self, classOf[MesosStatusUpdateEvent])
+      log.info("Starting {} to track kill progress of {} tasks", name, taskIds.size)
+    } else {
+      promise.tryComplete(Try(()))
+      log.info("premature aborting of {} - no tasks to watch for", name)
+      context.stop(self)
+    }
   }
 
   override def postStop(): Unit = {

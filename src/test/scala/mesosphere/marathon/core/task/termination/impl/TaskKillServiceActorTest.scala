@@ -133,6 +133,28 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     promise.future.futureValue should be (())
   }
 
+  test("kill multiple tasks at once (empty list)") {
+    val f = new Fixture
+    val actor = f.createTaskKillActor()
+
+    Given("an empty list")
+    val emptyList = Seq.empty[Task]
+
+    When("the service is asked to kill those tasks")
+    val promise = Promise[Unit]()
+    actor ! TaskKillServiceActor.KillTasks(emptyList, promise)
+
+    Then("the promise is eventually completed successfully")
+    eventually(promise.isCompleted)
+    promise.future.futureValue should be (())
+
+    And("the task tracker is not queried")
+    noMoreInteractions(f.taskTracker)
+
+    And("no kill is issued")
+    noMoreInteractions(f.driver)
+  }
+
   test("kill multiple tasks subsequently (without promise)") {
     val f = new Fixture
     val actor = f.createTaskKillActor()
