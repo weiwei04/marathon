@@ -5,7 +5,8 @@ import mesosphere.marathon.core.task.Task
 import scala.concurrent.Future
 
 /**
-  * A general service that handles killing tasks that will handle retrying etc on its own.
+  * A service that handles killing tasks. This will take care about extra logic for lost tasks,
+  * apply a retry strategy and throttle kill requests to Mesos.
   */
 trait TaskKillService {
   // TODO: should we favor distinct vs overloaded functions? killTask, killTaskById, killTasks, killUnknownTask?
