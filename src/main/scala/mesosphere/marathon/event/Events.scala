@@ -232,6 +232,13 @@ case class MesosStatusUpdateEvent(
   eventType: String = "status_update_event",
   timestamp: String = Timestamp.now().toString) extends MarathonEvent
 
+// TODO these must be removed when we have a distinct MarathonTaskStatus
+// They were added to cover TaskStateOp.ForceExpunge where no MesosStatus has triggered the expunge
+object MesosStatusUpdateEvent {
+  val Created = "TASK_CREATED"
+  val OtherTerminalState = "TASK_TERMINAL"
+}
+
 case class MesosFrameworkMessageEvent(
   executorId: String,
   slaveId: String,
