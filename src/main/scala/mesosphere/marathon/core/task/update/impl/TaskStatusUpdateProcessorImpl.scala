@@ -46,14 +46,9 @@ class TaskStatusUpdateProcessorImpl @Inject() (
     val taskId = Task.Id(status.getTaskId)
 
     taskTracker.task(taskId).flatMap {
-      case Some(task) if task.launched.isDefined =>
+      case Some(task) =>
         val taskStateOp = TaskStateOp.MesosUpdate(task, MarathonTaskStatus(status), now)
         stateOpProcessor.process(taskStateOp).flatMap(_ => acknowledge(status))
-
-      case Some(task) if killWhenUnknownOrNotLaunched(status) =>
-        log.warn("killing {} for which no statusUpdate is expected", taskId)
-        killService.kill(task)
-        acknowledge(status)
 
       case None if killWhenUnknownOrNotLaunched(status) =>
         killUnknownTaskTimer {

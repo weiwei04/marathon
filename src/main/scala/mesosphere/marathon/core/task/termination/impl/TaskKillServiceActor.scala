@@ -48,7 +48,7 @@ private[impl] class TaskKillServiceActor(
     case KillTasks(tasks, promise) =>
       killTasks(tasks, promise)
 
-    case Terminal(event) if tasksToKill.contains(event.taskId) =>
+    case Terminal(event) if inFlight.contains(event.taskId) || tasksToKill.contains(event.taskId) =>
       handleTerminal(event.taskId)
 
     case Retry =>

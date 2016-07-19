@@ -5,7 +5,7 @@ import javax.inject.Named
 import akka.event.EventStream
 import com.google.inject.Inject
 import mesosphere.marathon.core.base.Clock
-import mesosphere.marathon.core.task.bus.MarathonTaskStatus.WithMesosStatus
+import mesosphere.marathon.core.task.bus.MarathonTaskStatus.{ Terminal, WithMesosStatus }
 import mesosphere.marathon.core.task.bus.TaskChangeObservables.TaskChanged
 import mesosphere.marathon.core.task.update.TaskUpdateStep
 import mesosphere.marathon.core.task.{ EffectiveTaskStateChange, Task, TaskStateChange, TaskStateOp }
@@ -51,6 +51,9 @@ class PostToEventStreamStepImpl @Inject() (
 
   private[this] def inferTaskState(taskChanged: TaskChanged): String = {
     (taskChanged.stateOp, taskChanged.stateChange) match {
+      // TODO: A terminal MesosStatusUpdate for a resident transitions to state Reserved
+      case (TaskStateOp.MesosUpdate(_, Terminal(status), _), TaskStateChange.Update(task, oldState)) =>
+        status.mesosStatus.fold(MesosStatusUpdateEvent.OtherTerminalState)(_.getState.toString)
       case (TaskStateOp.MesosUpdate(_, WithMesosStatus(mesosStatus), _), _) => mesosStatus.getState.toString
       case (_, TaskStateChange.Expunge(task)) => MesosStatusUpdateEvent.OtherTerminalState
       case (_, TaskStateChange.Update(newState, maybeOldState)) => MesosStatusUpdateEvent.Created
@@ -64,7 +67,8 @@ class PostToEventStreamStepImpl @Inject() (
     task: Task): Unit = {
 
     val taskId = task.taskId
-    val version = task.launched.fold("n/a")(_.runSpecVersion.toString)
+    // TODO: Timestamp(0) is not good ...
+    val version = task.launched.fold(Timestamp(0))(_.runSpecVersion).toString
     val slaveId = maybeStatus.fold("n/a")(_.getSlaveId.getValue)
     val message = maybeStatus.fold("")(status => if (status.hasMessage) status.getMessage else "")
     val host = task.agentInfo.host
