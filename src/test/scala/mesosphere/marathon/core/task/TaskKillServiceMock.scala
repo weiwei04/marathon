@@ -1,6 +1,7 @@
 package mesosphere.marathon.core.task
 
 import akka.actor.ActorSystem
+import mesosphere.marathon.core.task.Task.Id
 import mesosphere.marathon.core.task.termination.TaskKillService
 import mesosphere.marathon.event.MesosStatusUpdateEvent
 import org.slf4j.LoggerFactory
@@ -31,8 +32,9 @@ class TaskKillServiceMock(system: ActorSystem) extends TaskKillService {
     numKilled += 1
     killed += taskId
   }
-  override def kill(task: Task): Unit = {
-    kill(task.taskId)
-  }
+
+  override def kill(task: Task): Unit = kill(task.taskId)
+
+  override def killUnknownTask(taskId: Id): Unit = kill(taskId)
 }
 

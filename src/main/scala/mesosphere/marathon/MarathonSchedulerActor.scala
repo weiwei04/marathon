@@ -17,7 +17,7 @@ import mesosphere.marathon.health.HealthCheckManager
 import mesosphere.marathon.state._
 import mesosphere.marathon.upgrade.DeploymentManager._
 import mesosphere.marathon.upgrade.{ DeploymentManager, DeploymentPlan, UpgradeConfig }
-import org.apache.mesos.Protos.{ Status, TaskID, TaskState }
+import org.apache.mesos.Protos.{ Status, TaskState }
 import org.apache.mesos.SchedulerDriver
 import org.slf4j.LoggerFactory
 
@@ -428,6 +428,7 @@ class SchedulerActions(
     launchQueue: LaunchQueue,
     eventBus: EventStream,
     val schedulerActor: ActorRef,
+    val killService: TaskKillService,
     config: MarathonConf)(implicit ec: ExecutionContext) {
 
   private[this] val log = LoggerFactory.getLogger(getClass)
@@ -439,14 +440,18 @@ class SchedulerActions(
     scale(driver, app)
   }
 
-  def stopApp(driver: SchedulerDriver, app: AppDefinition): Future[_] = {
+  def stopApp(app: AppDefinition): Future[_] = {
     healthCheckManager.removeAllFor(app.id)
 
     log.info(s"Stopping app ${app.id}")
     taskTracker.appTasks(app.id).map { tasks =>
+      tasks.foreach { task =>
+        if (task.launchedMesosId.isDefined) {
+          log.warn("Killing {}", task.taskId)
+          killService.kill(task)
+        }
+      }
       tasks.flatMap(_.launchedMesosId).foreach { taskId =>
-        log.info(s"Killing task [${taskId.getValue}]")
-        driver.killTask(taskId)
       }
       launchQueue.purge(app.id)
       launchQueue.resetDelay(app)
@@ -487,7 +492,7 @@ class SchedulerActions(
           )
           tasksByApp.appTasks(unknownAppId).foreach { orphanTask =>
             log.info(s"Killing ${orphanTask.taskId}")
-            driver.killTask(orphanTask.taskId.mesosTaskId)
+            killService.kill(orphanTask)
           }
         }
 
@@ -556,9 +561,9 @@ class SchedulerActions(
         .filter(t => t.mesosStatus.fold(false)(status => runningOrStaged.get(status.getState).nonEmpty))
         .sortWith(sortByStateAndTime)
         .take(launchedCount - targetCount)
-      val taskIds: Iterable[TaskID] = toKill.flatMap(_.launchedMesosId)
-      log.info(s"Killing tasks: ${taskIds.map(_.getValue)}")
-      taskIds.foreach(driver.killTask)
+
+      log.warn("Killing tasks {}", toKill.map(_.taskId))
+      killService.kill(toKill)
     } else {
       log.info(s"Already running ${app.instances} instances of ${app.id}. Not scaling.")
     }

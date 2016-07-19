@@ -98,7 +98,7 @@ class DeploymentActorTest
       f.killService.killed should contain (task2_1.taskId) // killed due to config change
       f.killService.killed should contain (task4_1.taskId) // killed because app4 does not exist anymore
       f.killService.numKilled should be (3)
-      verify(f.scheduler).stopApp(f.driver, app4.copy(instances = 0))
+      verify(f.scheduler).stopApp(app4.copy(instances = 0))
     } finally {
       Await.result(system.terminate(), Duration.Inf)
     }

@@ -4,9 +4,11 @@ import mesosphere.marathon.core.task.Task
 
 import scala.concurrent.Future
 
-// TODO: do we favor distinct vs overloaded functions?
-// TODO: explicitly kill unknownTask so that the service won't attempt to load it from state?
+/**
+  * A general service that handles killing tasks that will handle retrying etc on its own.
+  */
 trait TaskKillService {
+  // TODO: should we favor distinct vs overloaded functions? killTask, killTaskById, killTasks, killUnknownTask?
 
   /**
     * Kill the given tasks and return a future that is completed when all of the tasks
@@ -34,4 +36,12 @@ trait TaskKillService {
     * @param task the task that shall be killed.
     */
   def kill(task: Task): Unit
+
+  /**
+    * Kill the given unknown task by ID and do not try to fetch its state
+    * upfront. Only use this when it is certain that the task is unknown.
+    *
+    * @param taskId the id of the task that shall be killed.
+    */
+  def killUnknownTask(taskId: Task.Id): Unit
 }

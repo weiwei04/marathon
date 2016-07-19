@@ -6,6 +6,7 @@ import com.google.inject.name.Names
 import mesosphere.marathon.MarathonSchedulerDriverHolder
 import mesosphere.marathon.core.base.Clock
 import mesosphere.marathon.core.task.bus.MarathonTaskStatus
+import mesosphere.marathon.core.task.termination.TaskKillService
 import mesosphere.marathon.core.task.tracker.{ TaskStateOpProcessor, TaskTracker }
 import mesosphere.marathon.core.task.update.TaskStatusUpdateProcessor
 import mesosphere.marathon.core.task.{ Task, TaskStateOp }
@@ -24,7 +25,8 @@ class TaskStatusUpdateProcessorImpl @Inject() (
     clock: Clock,
     taskTracker: TaskTracker,
     stateOpProcessor: TaskStateOpProcessor,
-    driverHolder: MarathonSchedulerDriverHolder) extends TaskStatusUpdateProcessor {
+    driverHolder: MarathonSchedulerDriverHolder,
+    killService: TaskKillService) extends TaskStatusUpdateProcessor {
   import scala.concurrent.ExecutionContext.Implicits.global
 
   private[this] val log = LoggerFactory.getLogger(getClass)
@@ -48,11 +50,15 @@ class TaskStatusUpdateProcessorImpl @Inject() (
         val taskStateOp = TaskStateOp.MesosUpdate(task, MarathonTaskStatus(status), now)
         stateOpProcessor.process(taskStateOp).flatMap(_ => acknowledge(status))
 
-      case maybeTask: Option[Task] if killWhenUnknownOrNotLaunched(status) =>
+      case Some(task) if killWhenUnknownOrNotLaunched(status) =>
+        log.warn("killing {} for which no statusUpdate is expected", taskId)
+        killService.kill(task)
+        acknowledge(status)
+
+      case None if killWhenUnknownOrNotLaunched(status) =>
         killUnknownTaskTimer {
-          val taskStr = taskKnownOrNotStr(maybeTask)
-          log.warn(s"Kill $taskStr $taskId")
-          killTask(taskId.mesosTaskId)
+          log.warn("Kill unknown {}", taskId)
+          killService.killUnknownTask(taskId)
           acknowledge(status)
         }
 
@@ -66,10 +72,6 @@ class TaskStatusUpdateProcessorImpl @Inject() (
   private[this] def acknowledge(taskStatus: MesosProtos.TaskStatus): Future[Unit] = {
     driverHolder.driver.foreach(_.acknowledgeStatusUpdate(taskStatus))
     Future.successful(())
-  }
-
-  private[this] def killTask(taskId: MesosProtos.TaskID): Unit = {
-    driverHolder.driver.foreach(_.killTask(taskId))
   }
 }
 

@@ -84,7 +84,6 @@ private[impl] class TaskKillServiceActor(
 
   def killTasks(tasks: Iterable[Task], promise: Promise[Unit]): Unit = {
     log.debug("Adding {} tasks to queue; setting up child actor to track progress", tasks.size)
-    // TODO: watch children? Fail promises in postStop?
     context.actorOf(TaskKillProgressActor.props(tasks.map(_.taskId), promise))
     tasks.foreach { task =>
       tasksToKill.update(task.taskId, Some(task))
@@ -109,7 +108,6 @@ private[impl] class TaskKillServiceActor(
 
     if (taskIsLost) {
       log.warning("Expunging lost {} from state because it should be killed", taskId)
-      // TODO: should we map into the future and handle the result?
       // we will eventually be notified of a taskStatusUpdate after the task has been expunged
       stateOpProcessor.process(TaskStateOp.ForceExpunge(taskId))
     } else {
@@ -164,9 +162,9 @@ private[termination] object TaskKillServiceActor {
   case class KillTask(task: Task) extends Request
   case class KillTasks(tasks: Iterable[Task], promise: Promise[Unit]) extends Request
   case class KillTaskById(taskId: Task.Id) extends Request
+  case class KillUnknownTaskById(taskId: Task.Id) extends Request
 
   sealed trait InternalRequest
-  case class KillUnknownTaskById(taskId: Task.Id) extends InternalRequest
   case object Retry extends InternalRequest
 
   case class TaskToKill(taskId: Task.Id, maybeTask: Option[Task], issued: Timestamp, attempts: Int)

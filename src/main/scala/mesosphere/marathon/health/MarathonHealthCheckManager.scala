@@ -9,11 +9,12 @@ import akka.util.Timeout
 import com.google.inject.Provider
 import mesosphere.marathon.Protos.HealthCheckDefinition.Protocol
 import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.termination.TaskKillService
 import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.event.{ AddHealthCheck, EventModule, RemoveHealthCheck }
 import mesosphere.marathon.health.HealthCheckActor.{ AppHealth, GetAppHealth }
 import mesosphere.marathon.state.{ AppDefinition, AppRepository, PathId, Timestamp }
-import mesosphere.marathon.{ MarathonSchedulerDriverHolder, ZookeeperConf }
+import mesosphere.marathon.ZookeeperConf
 import mesosphere.util.RWLock
 import org.apache.mesos.Protos.TaskStatus
 
@@ -25,13 +26,13 @@ import scala.concurrent.duration._
 
 class MarathonHealthCheckManager @Inject() (
     system: ActorSystem,
-    driverHolderProvider: Provider[MarathonSchedulerDriverHolder],
+    killServiceProvider: Provider[TaskKillService],
     @Named(EventModule.busName) eventBus: EventStream,
     taskTrackerProvider: Provider[TaskTracker],
     appRepository: AppRepository,
     zkConf: ZookeeperConf) extends HealthCheckManager {
 
-  private[this] lazy val driverHolder = driverHolderProvider.get()
+  private[this] lazy val killService = killServiceProvider.get()
   private[this] lazy val taskTracker = taskTrackerProvider.get()
 
   protected[this] case class ActiveHealthCheck(
@@ -65,7 +66,7 @@ class MarathonHealthCheckManager @Inject() (
         log.info(s"Adding health check for app [${app.id}] and version [${app.version}]: [$healthCheck]")
 
         val ref = system.actorOf(
-          HealthCheckActor.props(app, driverHolder, healthCheck, taskTracker, eventBus))
+          HealthCheckActor.props(app, killService, healthCheck, taskTracker, eventBus))
         val newHealthChecksForApp =
           healthChecksForApp + ActiveHealthCheck(healthCheck, ref)
 
@@ -223,7 +224,7 @@ class MarathonHealthCheckManager @Inject() (
         taskTracker.appTasks(appId).map { appTasks =>
           appTasks.iterator.map { task =>
             groupedHealth.get(task.taskId) match {
-              case Some(xs) => task.taskId -> xs.toSeq
+              case Some(xs) => task.taskId -> xs
               case None => task.taskId -> Nil
             }
           }.toMap

@@ -142,8 +142,9 @@ private class DeploymentActor(
 
   def stopApp(app: AppDefinition): Future[Unit] = {
     val tasks = taskTracker.appTasksLaunchedSync(app.id)
+    // TODO: the launch queue is purged in stopApp, but it would make sense to do that before calling kill(tasks)
     killService.kill(tasks).andThen {
-      case Success(_) => scheduler.stopApp(driver, app)
+      case Success(_) => scheduler.stopApp(app)
     }
   }
 

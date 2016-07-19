@@ -2,6 +2,7 @@ package mesosphere.marathon.core.task.termination.impl
 
 import akka.actor.ActorRef
 import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.Task.Id
 import mesosphere.marathon.core.task.termination.TaskKillService
 
 import scala.concurrent.{ Future, Promise }
@@ -23,4 +24,7 @@ private[termination] class TaskKillServiceDelegate(actorRef: ActorRef) extends T
     actorRef ! KillTask(task)
   }
 
+  override def killUnknownTask(taskId: Id): Unit = {
+    actorRef ! KillUnknownTaskById(taskId)
+  }
 }

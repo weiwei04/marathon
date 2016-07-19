@@ -9,6 +9,7 @@ import mesosphere.marathon.state.AppRepository
 import mesosphere.marathon.state.Timestamp
 import mesosphere.marathon.test.MarathonActorSupport
 import mesosphere.marathon._
+import mesosphere.marathon.core.task.termination.TaskKillService
 import mesosphere.util.CallerThreadExecutionContext
 import org.apache.mesos.SchedulerDriver
 import org.mockito.Mockito.{ verify, verifyNoMoreInteractions, when }
@@ -64,7 +65,7 @@ class HealthCheckActorTest
     val actor = f.actor(HealthCheck(maxConsecutiveFailures = 3))
 
     actor.underlyingActor.checkConsecutiveFailures(f.task, Health(f.task.taskId, consecutiveFailures = 3))
-    verify(f.driver).killTask(f.task.taskId.mesosTaskId)
+    verify(f.killService).kill(f.task)
     verifyNoMoreInteractions(f.tracker, f.driver, f.scheduler)
   }
 
@@ -86,6 +87,7 @@ class HealthCheckActorTest
     val holder: MarathonSchedulerDriverHolder = new MarathonSchedulerDriverHolder
     val driver = mock[SchedulerDriver]
     holder.driver = Some(driver)
+    val killService: TaskKillService = mock[TaskKillService]
     when(appRepository.app(appId, appVersion)).thenReturn(Future.successful(Some(app)))
 
     val taskId = "test_task.9876543"
@@ -96,13 +98,13 @@ class HealthCheckActorTest
 
     def actor(healthCheck: HealthCheck) = TestActorRef[HealthCheckActor](
       Props(
-        new HealthCheckActor(app, holder, healthCheck, tracker, system.eventStream)
+        new HealthCheckActor(app, killService, healthCheck, tracker, system.eventStream)
       )
     )
 
     def actorWithLatch(healthCheck: HealthCheck, latch: TestLatch) = TestActorRef[HealthCheckActor](
       Props(
-        new HealthCheckActor(app, holder, HealthCheck(), tracker, system.eventStream) {
+        new HealthCheckActor(app, killService, HealthCheck(), tracker, system.eventStream) {
           override val workerProps = Props {
             latch.countDown()
             new TestActors.EchoActor

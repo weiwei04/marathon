@@ -170,7 +170,7 @@ class CoreModuleImpl @Inject() (
   taskJobsModule.handleOverdueTasks(
     taskTrackerModule.taskTracker,
     taskTrackerModule.taskReservationTimeoutHandler,
-    marathonSchedulerDriverHolder
+    taskTerminationModule.taskKillService
   )
   taskJobsModule.expungeOverdueLostTasks(taskTrackerModule.taskTracker, taskTrackerModule.stateOpProcessor)
   maybeOfferReviver

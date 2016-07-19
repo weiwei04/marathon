@@ -20,8 +20,6 @@ import mesosphere.marathon.state.PathId._
 import mesosphere.marathon.state._
 import mesosphere.marathon.test.{ MarathonActorSupport, Mockito }
 import mesosphere.marathon.upgrade._
-import mesosphere.mesos.protos.Implicits._
-import mesosphere.mesos.protos.TaskID
 import mesosphere.util.state.FrameworkIdUtil
 import org.apache.mesos.Protos.Status
 import org.apache.mesos.SchedulerDriver
@@ -59,10 +57,10 @@ class MarathonSchedulerActorTest extends MarathonActorSupport
     val f = new Fixture
     import f._
     val app = AppDefinition(id = "test-app".toPath, instances = 1)
-    val tasks = Iterable(MarathonTestHelper.runningTask("task_a"))
+    val task = MarathonTestHelper.runningTask("task_a")
 
     repo.allPathIds() returns Future.successful(Seq(app.id))
-    taskTracker.tasksByApp()(any[ExecutionContext]) returns Future.successful(TaskTracker.TasksByApp.of(TaskTracker.AppTasks.forTasks("nope".toPath, tasks)))
+    taskTracker.tasksByApp()(any[ExecutionContext]) returns Future.successful(TaskTracker.TasksByApp.of(TaskTracker.AppTasks.forTasks("nope".toPath, Iterable(task))))
     repo.currentVersion(app.id) returns Future.successful(Some(app))
 
     val schedulerActor = createActor()
@@ -73,8 +71,7 @@ class MarathonSchedulerActorTest extends MarathonActorSupport
       expectMsg(5.seconds, TasksReconciled)
 
       awaitAssert({
-        // TODO: this shouldn't invoke the driver directly
-        verify(driver).killTask(TaskID("task_a"))
+        killService.killed should contain (task.taskId)
       }, 5.seconds, 10.millis)
     } finally {
       stopActor(schedulerActor)
@@ -513,7 +510,7 @@ class MarathonSchedulerActorTest extends MarathonActorSupport
     val electionService: ElectionService = mock[ElectionService]
     val schedulerActions: ActorRef => SchedulerActions = ref => {
       new SchedulerActions(
-        repo, groupRepo, hcManager, taskTracker, queue, new EventStream(system), ref, mock[MarathonConf])(system.dispatcher)
+        repo, groupRepo, hcManager, taskTracker, queue, new EventStream(system), ref, killService, mock[MarathonConf])(system.dispatcher)
     }
     val conf: UpgradeConfig = mock[UpgradeConfig]
     val readinessCheckExecutor: ReadinessCheckExecutor = mock[ReadinessCheckExecutor]

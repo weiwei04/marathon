@@ -198,6 +198,7 @@ class MarathonModule(conf: MarathonConf, http: HttpConf)
         launchQueue,
         eventBus,
         schedulerActor,
+        killService,
         conf)
     }
 

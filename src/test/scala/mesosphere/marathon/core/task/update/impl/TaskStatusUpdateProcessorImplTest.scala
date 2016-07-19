@@ -4,6 +4,7 @@ import akka.actor.ActorSystem
 import com.codahale.metrics.MetricRegistry
 import mesosphere.marathon.core.base.ConstantClock
 import mesosphere.marathon.core.task.bus.{ MarathonTaskStatus, TaskStatusUpdateTestHelper }
+import mesosphere.marathon.core.task.termination.TaskKillService
 import mesosphere.marathon.core.task.tracker.{ TaskStateOpProcessor, TaskTracker }
 import mesosphere.marathon.core.task.{ Task, TaskStateChange, TaskStateOp }
 import mesosphere.marathon.metrics.Metrics
@@ -37,7 +38,8 @@ class TaskStatusUpdateProcessorImplTest
     verify(f.taskTracker).task(taskId)
 
     And("the task kill gets initiated")
-    verify(f.schedulerDriver).killTask(status.getTaskId)
+    verify(f.killService).killUnknownTask(taskId)
+    verify(f.killService).killUnknownTask(taskId)
     And("the update has been acknowledged")
     verify(f.schedulerDriver).acknowledgeStatusUpdate(status)
 
@@ -47,25 +49,24 @@ class TaskStatusUpdateProcessorImplTest
 
   test("process update for known task without launchedTask that's not lost will result in a kill and ack") {
     fOpt = Some(new Fixture)
-    val origUpdate = TaskStatusUpdateTestHelper.finished() // everything != lost is handled in the same way
+    val appId = PathId("/app")
+    val task = MarathonTestHelper.minimalReservedTask(
+      appId, Task.Reservation(Iterable.empty, MarathonTestHelper.taskReservationStateNew))
+    val origUpdate = TaskStatusUpdateTestHelper.finished(task) // everything != lost is handled in the same way
     val status = origUpdate.status
     val update = origUpdate
-    val taskId = update.wrapped.stateOp.taskId
 
     Given("an unknown task")
-    f.taskTracker.task(taskId) returns Future.successful(
-      Some(MarathonTestHelper.minimalReservedTask(
-        taskId.runSpecId, Task.Reservation(Iterable.empty, MarathonTestHelper.taskReservationStateNew)))
-    )
+    f.taskTracker.task(origUpdate.wrapped.taskId) returns Future.successful(Some(task))
 
     When("we process the updated")
     f.updateProcessor.publish(status).futureValue
 
     Then("we expect that the appropriate taskTracker methods have been called")
-    verify(f.taskTracker).task(taskId)
+    verify(f.taskTracker).task(task.taskId)
 
     And("the task kill gets initiated")
-    verify(f.schedulerDriver).killTask(status.getTaskId)
+    verify(f.killService).kill(task)
     And("the update has been acknowledged")
     verify(f.schedulerDriver).acknowledgeStatusUpdate(status)
 
@@ -167,6 +168,7 @@ class TaskStatusUpdateProcessorImplTest
     lazy val taskTracker: TaskTracker = mock[TaskTracker]
     lazy val stateOpProcessor: TaskStateOpProcessor = mock[TaskStateOpProcessor]
     lazy val schedulerDriver: SchedulerDriver = mock[SchedulerDriver]
+    lazy val killService: TaskKillService = mock[TaskKillService]
     lazy val marathonSchedulerDriverHolder: MarathonSchedulerDriverHolder = {
       val holder = new MarathonSchedulerDriverHolder
       holder.driver = Some(schedulerDriver)
@@ -178,7 +180,8 @@ class TaskStatusUpdateProcessorImplTest
       clock,
       taskTracker,
       stateOpProcessor,
-      marathonSchedulerDriverHolder
+      marathonSchedulerDriverHolder,
+      killService
     )
 
     def verifyNoMoreInteractions(): Unit = {
