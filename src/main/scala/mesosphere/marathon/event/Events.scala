@@ -235,8 +235,8 @@ case class MesosStatusUpdateEvent(
 // TODO these must be removed when we have a distinct MarathonTaskStatus
 // They were added to cover TaskStateOp.ForceExpunge where no MesosStatus has triggered the expunge
 object MesosStatusUpdateEvent {
-  val Created = "TASK_CREATED"
-  val OtherTerminalState = "TASK_TERMINAL"
+  val Created = "TASK_STAGING" // we have to lie because others might try to do TaskState.valueOf(..)
+  val OtherTerminalState = "TASK_KILLED" // we have to lie because others might try to do TaskState.valueOf(..)
 }
 
 case class MesosFrameworkMessageEvent(
