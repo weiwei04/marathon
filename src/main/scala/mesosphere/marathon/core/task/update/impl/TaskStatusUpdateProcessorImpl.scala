@@ -50,7 +50,7 @@ class TaskStatusUpdateProcessorImpl @Inject() (
         val taskStateOp = TaskStateOp.MesosUpdate(task, MarathonTaskStatus(status), now)
         stateOpProcessor.process(taskStateOp).flatMap(_ => acknowledge(status))
 
-      case None if killWhenUnknownOrNotLaunched(status) =>
+      case None if killWhenUnknown(status) =>
         killUnknownTaskTimer {
           log.warn("Kill unknown {}", taskId)
           killService.killUnknownTask(taskId)
@@ -73,11 +73,18 @@ class TaskStatusUpdateProcessorImpl @Inject() (
 object TaskStatusUpdateProcessorImpl {
   lazy val name = Names.named(getClass.getSimpleName)
 
-  private[this] val ignoreWhenUnknown = Set(MesosProtos.TaskState.TASK_KILLING, MesosProtos.TaskState.TASK_LOST)
-  // If we kill an unknown task, we will get another TASK_LOST notification which leads to an endless
-  // stream of kills and TASK_LOST updates.
-  // In addition, we won't kill unknown tasks when they're in state TASK_KILLING
-  private def killWhenUnknownOrNotLaunched(status: MesosProtos.TaskStatus): Boolean = {
+  // TODO: Given a clean MarathonTaskStatus we should get rid of this
+  private[this] val ignoreWhenUnknown = Set(
+    MesosProtos.TaskState.TASK_KILLED,
+    MesosProtos.TaskState.TASK_KILLING,
+    MesosProtos.TaskState.TASK_ERROR,
+    MesosProtos.TaskState.TASK_FAILED,
+    MesosProtos.TaskState.TASK_FINISHED,
+    MesosProtos.TaskState.TASK_LOST
+  )
+  // It doesn't make sense to kill an unknown task if it is in a terminal or killing state
+  // We'd only get another update for the same task
+  private def killWhenUnknown(status: MesosProtos.TaskStatus): Boolean = {
     !ignoreWhenUnknown.contains(status.getState)
   }
 
