@@ -12,10 +12,12 @@ import mesosphere.marathon.state.{ PathId, Timestamp }
 import mesosphere.marathon.test.Mockito
 import org.apache.mesos
 import org.apache.mesos.SchedulerDriver
+import org.mockito.ArgumentCaptor
 import org.scalatest.concurrent.{ Eventually, ScalaFutures }
 import org.scalatest.time.{ Millis, Span }
 import org.scalatest.{ BeforeAndAfterAll, BeforeAndAfterEach, FunSuiteLike, GivenWhenThen, Matchers }
 
+import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 import scala.concurrent.{ Future, Promise }
 
@@ -181,24 +183,30 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     val actor = f.createTaskKillActor()
 
     Given("multiple tasks")
-    val tasks = (1 to 10).map { index =>
-      f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
-    }
+    val tasks: Map[Task.Id, Task] = (1 to 10).map { index =>
+      val task = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+      task.taskId -> task
+    }(collection.breakOut)
 
     When("the service is asked to kill those tasks")
-    tasks.foreach { task =>
+    tasks.values.foreach { task =>
       actor ! TaskKillServiceActor.KillTask(task)
     }
 
     Then("5 kills are issued immediately to the driver")
-    verify(f.driver, times(5)).killTask(any)
+    val captor: ArgumentCaptor[mesos.Protos.TaskID] = ArgumentCaptor.forClass(classOf[mesos.Protos.TaskID])
+    verify(f.driver, timeout(5000).times(5)).killTask(captor.capture())
+    reset(f.driver)
 
-    And("after receiving remaining terminal messages, all the tasks are killed eventually")
-    tasks.foreach { task =>
-      f.publishStatusUpdate(task, mesos.Protos.TaskState.TASK_KILLED)
+    And("after receiving terminal messages for the requested kills, 5 additional tasks are killed")
+    captor.getAllValues.asScala.foreach { id =>
+      val taskId = Task.Id(id)
+      tasks.get(taskId).foreach { task =>
+        f.publishStatusUpdate(task, mesos.Protos.TaskState.TASK_KILLED)
+      }
     }
 
-    verify(f.driver, times(5)).killTask(any)
+    verify(f.driver, timeout(500).times(5)).killTask(any)
     noMoreInteractions(f.driver)
   }
 
@@ -207,29 +215,35 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     val actor = f.createTaskKillActor()
 
     Given("multiple tasks")
-    val tasks = (1 to 10).map { index =>
-      f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
-    }
+    val tasks: Map[Task.Id, Task] = (1 to 10).map { index =>
+      val task = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
+      task.taskId -> task
+    }(collection.breakOut)
 
     When("the service is asked to kill those tasks")
     val promise = Promise[Unit]()
-    actor ! TaskKillServiceActor.KillTasks(tasks, promise)
+    actor ! TaskKillServiceActor.KillTasks(tasks.values, promise)
 
     Then("5 kills are issued immediately to the driver")
-    verify(f.driver, times(5)).killTask(any)
+    val captor: ArgumentCaptor[mesos.Protos.TaskID] = ArgumentCaptor.forClass(classOf[mesos.Protos.TaskID])
+    verify(f.driver, timeout(5000).times(5)).killTask(captor.capture())
+    reset(f.driver)
 
-    And("after receiving remaining terminal messages, all the tasks are killed eventually")
-    tasks.foreach { task =>
-      f.publishStatusUpdate(task, mesos.Protos.TaskState.TASK_KILLED)
+    And("after receiving terminal messages for the requested kills, 5 additional tasks are killed")
+    captor.getAllValues.asScala.foreach { id =>
+      val taskId = Task.Id(id)
+      tasks.get(taskId).foreach { task =>
+        f.publishStatusUpdate(task, mesos.Protos.TaskState.TASK_KILLED)
+      }
     }
 
-    verify(f.driver, times(5)).killTask(any)
+    verify(f.driver, timeout(2000).times(5)).killTask(any)
     noMoreInteractions(f.driver)
   }
 
   test("kills will be retried") {
     val f = new Fixture
-    val actor = f.createTaskKillActor()
+    val actor = f.createTaskKillActor(f.retryConfig)
 
     Given("a single, known running task")
     val task = f.mockTask(Task.Id.forRunSpec(f.appId), f.now(), mesos.Protos.TaskState.TASK_RUNNING)
@@ -279,7 +293,13 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
       holder.driver = Some(driver)
       holder
     }
-    val config: TaskKillConfig = new TaskKillConfig {
+    val defaultConfig: TaskKillConfig = new TaskKillConfig {
+      import scala.concurrent.duration._
+      override def killChunkSize: Int = 5
+      override def killRetryTimeout: FiniteDuration = 10.minutes
+      override def killRetryMax: Int = 5
+    }
+    val retryConfig: TaskKillConfig = new TaskKillConfig {
       import scala.concurrent.duration._
       override def killChunkSize: Int = 5
       override def killRetryTimeout: FiniteDuration = 500.millis
@@ -289,7 +309,7 @@ class TaskKillServiceActorTest extends TestKit(ActorSystem("test"))
     val parent = TestProbe()
     val clock = ConstantClock()
 
-    def createTaskKillActor(): ActorRef = {
+    def createTaskKillActor(config: TaskKillConfig = defaultConfig): ActorRef = {
       import TaskKillServiceActorTest._
       val actorRef: ActorRef = TestActorRef(TaskKillServiceActor.props(taskTracker, driverHolder, stateOpProcessor, config, clock), parent.ref, "TaskKillService")
       actor = Some(actorRef)

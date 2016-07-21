@@ -35,6 +35,7 @@ private[impl] class TaskKillServiceActor(
     context.system.eventStream.subscribe(self, classOf[MesosStatusUpdateEvent])
   }
 
+  //scalastyle:off cyclomatic.complexity
   override def receive: Receive = {
     case KillTaskById(taskId) =>
       killTaskById(taskId)
@@ -60,6 +61,7 @@ private[impl] class TaskKillServiceActor(
     case unexpected: Any =>
       log.debug("Received unexpected {}", unexpected)
   }
+  //scalastyle:on
 
   def killTaskById(taskId: Task.Id): Unit = {
     log.debug("Received KillTaskById({})", taskId)
