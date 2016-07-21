@@ -11,7 +11,6 @@ import mesosphere.marathon.metrics.Metrics
 import mesosphere.marathon.state.PathId
 import mesosphere.marathon.test.Mockito
 import mesosphere.marathon.{ MarathonSchedulerDriverHolder, MarathonSpec, MarathonTestHelper }
-import org.apache.mesos.Protos.TaskStatus
 import org.apache.mesos.SchedulerDriver
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.{ GivenWhenThen, Matchers }
@@ -21,9 +20,45 @@ import scala.concurrent.{ Await, Future }
 
 class TaskStatusUpdateProcessorImplTest
     extends MarathonSpec with Mockito with ScalaFutures with GivenWhenThen with Matchers {
-  test("process update for unknown task that's not lost will result in a kill and ack") {
+
+  for {
+    (origUpdate, name) <- Seq(
+      (TaskStatusUpdateTestHelper.finished(), "finished"),
+      (TaskStatusUpdateTestHelper.error(), "error"),
+      (TaskStatusUpdateTestHelper.killed(), "killed"),
+      (TaskStatusUpdateTestHelper.killing(), "killing"),
+      (TaskStatusUpdateTestHelper.failed(), "failed")
+    )
+  } {
+    test(s"process update for unknown task that's $name will result in a noop") {
+      fOpt = Some(new Fixture)
+      val status = origUpdate.status
+      val update = origUpdate
+      val taskId = update.wrapped.stateOp.taskId
+
+      Given("an unknown task")
+      f.taskTracker.task(taskId) returns Future.successful(None)
+
+      When("we process the updated")
+      f.updateProcessor.publish(status).futureValue
+
+      Then("we expect that the appropriate taskTracker methods have been called")
+      verify(f.taskTracker).task(taskId)
+
+      And("no kill is issued")
+      noMoreInteractions(f.killService)
+
+      And("the update has been acknowledged")
+      verify(f.schedulerDriver).acknowledgeStatusUpdate(status)
+
+      And("that's it")
+      f.verifyNoMoreInteractions()
+    }
+  }
+
+  test("process update for unknown task active task that's not lost will result in a kill and ack") {
     fOpt = Some(new Fixture)
-    val origUpdate = TaskStatusUpdateTestHelper.finished() // everything != lost is handled in the same way
+    val origUpdate = TaskStatusUpdateTestHelper.running()
     val status = origUpdate.status
     val update = origUpdate
     val taskId = update.wrapped.stateOp.taskId
@@ -39,7 +74,6 @@ class TaskStatusUpdateProcessorImplTest
 
     And("the task kill gets initiated")
     verify(f.killService).killUnknownTask(taskId)
-    verify(f.killService).killUnknownTask(taskId)
     And("the update has been acknowledged")
     verify(f.schedulerDriver).acknowledgeStatusUpdate(status)
 
@@ -47,7 +81,9 @@ class TaskStatusUpdateProcessorImplTest
     f.verifyNoMoreInteractions()
   }
 
-  test("process update for known task without launchedTask that's not lost will result in a kill and ack") {
+  // TODO: it should be up to the Task.update function to determine whether the received update makes sense
+  // if not, a reconciliation should be triggered. Before, Marathon killed those tasks
+  ignore("process update for known task without launchedTask that's not lost will result in a kill and ack") {
     fOpt = Some(new Fixture)
     val appId = PathId("/app")
     val task = MarathonTestHelper.minimalReservedTask(
@@ -58,6 +94,10 @@ class TaskStatusUpdateProcessorImplTest
 
     Given("an unknown task")
     f.taskTracker.task(origUpdate.wrapped.taskId) returns Future.successful(Some(task))
+    f.taskTracker.task(any) returns {
+      println("WTF")
+      Future.successful(None)
+    }
 
     When("we process the updated")
     f.updateProcessor.publish(status).futureValue
@@ -67,54 +107,6 @@ class TaskStatusUpdateProcessorImplTest
 
     And("the task kill gets initiated")
     verify(f.killService).kill(task)
-    And("the update has been acknowledged")
-    verify(f.schedulerDriver).acknowledgeStatusUpdate(status)
-
-    And("that's it")
-    f.verifyNoMoreInteractions()
-  }
-
-  test("update for unknown task (TASK_LOST) will get only acknowledged") {
-    fOpt = Some(new Fixture)
-
-    val origUpdate = TaskStatusUpdateTestHelper.lost(TaskStatus.Reason.REASON_RECONCILIATION)
-    val status = origUpdate.status
-    val update = origUpdate
-    val taskId = update.wrapped.stateOp.taskId
-
-    Given("an unknown task")
-    f.taskTracker.task(taskId) returns Future.successful(None)
-
-    When("we process the update")
-    f.updateProcessor.publish(status).futureValue
-
-    Then("we expect that the appropriate taskTracker methods have been called")
-    verify(f.taskTracker).task(taskId)
-
-    And("the update has been acknowledged")
-    verify(f.schedulerDriver).acknowledgeStatusUpdate(status)
-
-    And("that's it")
-    f.verifyNoMoreInteractions()
-  }
-
-  test("update for unknown task (TASK_KILLING) will get only acknowledged") {
-    fOpt = Some(new Fixture)
-
-    val taskId = Task.Id.forRunSpec(appId)
-    val task = MarathonTestHelper.runningTask(taskId.idString)
-    val origUpdate = TaskStatusUpdateTestHelper.killing(task)
-    val status = origUpdate.status
-
-    Given("an unknown task")
-    f.taskTracker.task(taskId) returns Future.successful(None)
-
-    When("we process the update")
-    f.updateProcessor.publish(status).futureValue
-
-    Then("we expect that the appropriate taskTracker methods have been called")
-    verify(f.taskTracker).task(taskId)
-
     And("the update has been acknowledged")
     verify(f.schedulerDriver).acknowledgeStatusUpdate(status)
 
