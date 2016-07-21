@@ -34,13 +34,14 @@ class PostToEventStreamStepImpl @Inject() (
     taskChanged match {
       // the task was updated or expunged due to a MesosStatusUpdate
       // In this case, we're interested in the mesosStatus
-      case TaskChanged(MesosUpdate(_, WithMesosStatus(status), now), EffectiveTaskStateChange(task)) =>
-        postEvent(clock.now(), taskState, Some(status), task)
+      case TaskChanged(MesosUpdate(oldTask, WithMesosStatus(status), now), EffectiveTaskStateChange(task)) =>
+        postEvent(clock.now(), taskState, Some(status), task, inferVersion(task, Some(oldTask)))
 
-      // The task was otherwise either expunged or updated.
-      // We'll use the task's mesos status in this case
-      case TaskChanged(_, EffectiveTaskStateChange(task)) =>
-        postEvent(clock.now(), taskState, task.mesosStatus, task)
+      case TaskChanged(_, TaskStateChange.Update(newState, oldState)) =>
+        postEvent(clock.now(), taskState, newState.mesosStatus, newState, inferVersion(newState, oldState))
+
+      case TaskChanged(_, TaskStateChange.Expunge(task)) =>
+        postEvent(clock.now(), taskState, task.mesosStatus, task, inferVersion(task, None))
 
       case _ =>
         log.debug("Ignoring noop for {}", taskChanged.taskId)
@@ -49,10 +50,15 @@ class PostToEventStreamStepImpl @Inject() (
     Future.successful(())
   }
 
+  // inconvenient for now because not all tasks have a version
+  private[this] def inferVersion(newTask: Task, oldTask: Option[Task]): Timestamp = {
+    newTask.version.getOrElse(oldTask.fold(Timestamp(0))(_.version.getOrElse(Timestamp(0))))
+  }
+
   private[this] def inferTaskState(taskChanged: TaskChanged): String = {
     (taskChanged.stateOp, taskChanged.stateChange) match {
       // TODO: A terminal MesosStatusUpdate for a resident transitions to state Reserved
-      case (TaskStateOp.MesosUpdate(_, Terminal(status), _), TaskStateChange.Update(task, oldState)) =>
+      case (TaskStateOp.MesosUpdate(_, Terminal(status), _), TaskStateChange.Update(newState, oldState)) =>
         status.mesosStatus.fold(MesosStatusUpdateEvent.OtherTerminalState)(_.getState.toString)
       case (TaskStateOp.MesosUpdate(_, WithMesosStatus(mesosStatus), _), _) => mesosStatus.getState.toString
       case (_, TaskStateChange.Expunge(task)) => MesosStatusUpdateEvent.OtherTerminalState
@@ -64,11 +70,10 @@ class PostToEventStreamStepImpl @Inject() (
     timestamp: Timestamp,
     taskStatus: String,
     maybeStatus: Option[TaskStatus],
-    task: Task): Unit = {
+    task: Task,
+    version: Timestamp): Unit = {
 
     val taskId = task.taskId
-    // TODO: Timestamp(0) is not good ...
-    val version = task.launched.fold(Timestamp(0))(_.runSpecVersion).toString
     val slaveId = maybeStatus.fold("n/a")(_.getSlaveId.getValue)
     val message = maybeStatus.fold("")(status => if (status.hasMessage) status.getMessage else "")
     val host = task.agentInfo.host
@@ -86,7 +91,7 @@ class PostToEventStreamStepImpl @Inject() (
         host,
         ipAddresses,
         ports = ports,
-        version = version,
+        version = version.toString,
         timestamp = timestamp.toString
       )
     )

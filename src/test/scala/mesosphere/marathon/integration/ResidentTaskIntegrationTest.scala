@@ -231,21 +231,21 @@ class ResidentTaskIntegrationTest
     * (From http://mesos.apache.org/documentation/latest/authorization/)
     */
 
-  test("taskLostBehavior = RELAUNCH_AFTER_TIMEOUT, timeout = 10s") { f =>
+  ignore("taskLostBehavior = RELAUNCH_AFTER_TIMEOUT, timeout = 10s") { f =>
     Given("A resident app with 1 instance")
     When("The task is lost")
     Then("The task is not relaunched within the timeout")
     And("The task is relaunched with a new Id after the timeout")
   }
 
-  test("taskLostBehavior = WAIT_FOREVER") { f =>
+  ignore("taskLostBehavior = WAIT_FOREVER") { f =>
     Given("A resident app with 1 instance")
     When("The task is lost")
     Then("No timeout is scheduled") // can we easily verify this?
     And("The task is not relaunched") // can we verify this without waiting?
   }
 
-  test("relaunchEscalationTimeoutSeconds = 5s") { f =>
+  ignore("relaunchEscalationTimeoutSeconds = 5s") { f =>
     Given("A resident app with 1 instance")
     When("The task terminates")
     And("We don't get an offer within the timeout")
